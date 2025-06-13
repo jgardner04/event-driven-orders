@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: cmd/proxy/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PROXY_PORT=8080
+      - SAP_URL=http://sap-mock:8082
+    depends_on:
+      - sap-mock
+    networks:
+      - strangler-net
+
+  sap-mock:
+    build:
+      context: .
+      dockerfile: cmd/sap-mock/Dockerfile
+    ports:
+      - "8082:8082"
+    networks:
+      - strangler-net
+
+networks:
+  strangler-net:
+    driver: bridge
