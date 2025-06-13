@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: orderservice
+      POSTGRES_PASSWORD: orderservice
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - strangler-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orderservice"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - strangler-net
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - strangler-net
+
+  # Order Service
+  order-service:
+    build:
+      context: .
+      dockerfile: cmd/order-service/Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - ORDER_SERVICE_PORT=8081
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=orderservice
+      - DB_PASSWORD=orderservice
+      - DB_NAME=orders
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - strangler-net
+
+  # SAP Mock
+  sap-mock:
+    build:
+      context: .
+      dockerfile: cmd/sap-mock/Dockerfile
+    ports:
+      - "8082:8082"
+    networks:
+      - strangler-net
+
+  # Proxy Service
+  proxy:
+    build:
+      context: .
+      dockerfile: cmd/proxy/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PROXY_PORT=8080
+      - SAP_URL=http://sap-mock:8082
+      - ORDER_SERVICE_URL=http://order-service:8081
+    depends_on:
+      - sap-mock
+      - order-service
+    networks:
+      - strangler-net
+
+  # Kafka UI (optional but helpful for debugging)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    depends_on:
+      - kafka
+      - zookeeper
+    networks:
+      - strangler-net
+
+networks:
+  strangler-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
