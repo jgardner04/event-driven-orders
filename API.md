@@ -318,10 +318,40 @@ curl http://localhost:8081/health
 curl http://localhost:8082/health
 ```
 
-### Using the Test Script
+### Using the Test Scripts
 
+**Basic functionality test:**
 ```bash
 ./scripts/test-order.sh
 ```
 
-This script sends a sample order with multiple items and specifications.
+**Data comparison and verification:**
+```bash
+./scripts/compare-data.sh
+./scripts/demo-comparison.sh
+```
+
+**Performance testing:**
+```bash
+./scripts/performance-benchmark.sh
+```
+
+**Load testing:**
+```bash
+# Basic load test (50 orders, 10 concurrent)
+./scripts/load-test.sh
+
+# Custom load test
+./scripts/load-test.sh 100 20 5  # 100 orders, 20 concurrent, 5 batch
+
+# Advanced load test with scenarios
+./scripts/advanced-load-test.sh -s medium    # Predefined scenario
+./scripts/advanced-load-test.sh -c 200 -p 20 # Custom configuration
+./scripts/advanced-load-test.sh -s heavy -d  # Heavy load with detailed logging
+```
+
+**Available load test scenarios:**
+- `light`: 20 orders, 5 concurrent (development)
+- `medium`: 100 orders, 15 concurrent (integration)
+- `heavy`: 500 orders, 25 concurrent (performance)
+- `stress`: 1000 orders, 50 concurrent (stress testing)
