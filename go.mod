@@ -1,6 +1,6 @@
 module github.com/jogardn/strangler-demo
 
-go 1.21
+go 1.23.0
 
 require (
 	github.com/IBM/sarama v1.40.1
@@ -27,7 +27,7 @@ require (
 	github.com/klauspost/compress v1.16.6 // indirect
 	github.com/pierrec/lz4/v4 v4.1.18 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
-	golang.org/x/crypto v0.11.0 // indirect
-	golang.org/x/net v0.12.0 // indirect
-	golang.org/x/sys v0.10.0 // indirect
+	golang.org/x/crypto v0.35.0 // indirect
+	golang.org/x/net v0.21.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
 )
