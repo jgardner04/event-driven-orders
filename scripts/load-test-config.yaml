@@ -1,0 +1,126 @@
+# Load Test Configuration for Strangler Pattern Demo
+# =================================================
+
+# Test Parameters
+test:
+  name: "strangler-pattern-load-test"
+  description: "Load test to verify dual-write pattern performance and data consistency"
+  
+# Default Configuration
+defaults:
+  order_count: 50
+  concurrency: 10
+  batch_size: 5
+  request_timeout: 30
+  verification_delay: 2
+
+# Test Scenarios
+scenarios:
+  light:
+    order_count: 20
+    concurrency: 5
+    batch_size: 2
+    description: "Light load for development testing"
+    
+  medium:
+    order_count: 100
+    concurrency: 15
+    batch_size: 5
+    description: "Medium load for integration testing"
+    
+  heavy:
+    order_count: 500
+    concurrency: 25
+    batch_size: 10
+    description: "Heavy load for performance testing"
+    
+  stress:
+    order_count: 1000
+    concurrency: 50
+    batch_size: 20
+    description: "Stress test to find system limits"
+
+# Service Endpoints
+services:
+  proxy:
+    url: "http://localhost:8080"
+    health_endpoint: "/health"
+    orders_endpoint: "/orders"
+    compare_endpoint: "/compare/orders"
+    
+  order_service:
+    url: "http://localhost:8081"
+    health_endpoint: "/health"
+    orders_endpoint: "/orders"
+    
+  sap_mock:
+    url: "http://localhost:8082"
+    health_endpoint: "/health"
+    orders_endpoint: "/orders"
+
+# Performance Thresholds
+thresholds:
+  proxy_response_time:
+    warning: 3000  # ms
+    critical: 5000  # ms
+    
+  order_service_response_time:
+    warning: 100   # ms
+    critical: 500   # ms
+    
+  sap_mock_response_time:
+    warning: 2000  # ms
+    critical: 4000  # ms
+    
+  success_rate:
+    warning: 95    # %
+    critical: 90   # %
+    
+  data_consistency:
+    critical: 100  # % (must be perfect)
+
+# Test Data Generation
+test_data:
+  customers:
+    prefix: "LOAD-CUST"
+    count_range: [1, 1000]
+    
+  products:
+    prefixes: ["WIDGET", "COMPONENT", "ASSEMBLY"]
+    count_range: [1, 100]
+    
+  orders:
+    quantity_range: [1, 10]
+    price_range: [10.00, 500.00]
+    delivery_days_ahead: [1, 30]
+    
+  specifications:
+    colors: ["red", "blue", "green", "yellow", "black", "white"]
+    sizes: ["small", "medium", "large", "xl"]
+    materials: ["plastic", "metal", "wood", "composite"]
+    priorities: ["low", "normal", "high", "urgent"]
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "json"
+  enable_timing: true
+  enable_detailed_errors: true
+  output_files:
+    - "load-test-results.log"
+    - "performance-metrics.csv"
+    - "errors.log"
+
+# Monitoring
+monitoring:
+  enable_real_time_stats: true
+  stats_interval: 10  # seconds
+  enable_progress_bar: true
+  enable_performance_charts: false
+
+# Verification
+verification:
+  enable_data_consistency_check: true
+  sample_verification_count: 10
+  full_comparison_threshold: 100  # orders
+  retry_failed_verifications: 3
