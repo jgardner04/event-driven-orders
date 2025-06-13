@@ -65,3 +65,66 @@ func (c *Client) CreateOrder(order *models.Order) (*models.OrderResponse, error)
 
 	return &orderResp, nil
 }
+
+func (c *Client) GetOrders() ([]models.Order, error) {
+	c.logger.Info("Fetching orders from SAP")
+	
+	req, err := http.NewRequest("GET", c.baseURL+"/orders", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request to SAP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var response struct {
+		Success bool            `json:"success"`
+		Orders  []models.Order  `json:"orders"`
+		Count   int             `json:"count"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode SAP response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("SAP returned error status: %d", resp.StatusCode)
+	}
+
+	c.logger.WithField("count", response.Count).Info("Retrieved orders from SAP")
+	return response.Orders, nil
+}
+
+func (c *Client) GetOrder(orderID string) (*models.Order, error) {
+	c.logger.WithField("order_id", orderID).Info("Fetching order from SAP")
+	
+	req, err := http.NewRequest("GET", c.baseURL+"/orders/"+orderID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request to SAP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("order not found in SAP")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("SAP returned error status: %d", resp.StatusCode)
+	}
+
+	var order models.Order
+	if err := json.NewDecoder(resp.Body).Decode(&order); err != nil {
+		return nil, fmt.Errorf("failed to decode SAP response: %w", err)
+	}
+
+	c.logger.WithField("order_id", orderID).Info("Retrieved order from SAP")
+	return &order, nil
+}
