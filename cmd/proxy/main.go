@@ -21,13 +21,25 @@ func main() {
 
 	port := getEnv("PROXY_PORT", "8080")
 	sapURL := getEnv("SAP_URL", "http://localhost:8082")
+	orderServiceURL := getEnv("ORDER_SERVICE_URL", "")
 
 	sapClient := sap.NewClient(sapURL, logger)
-	orderHandler := orders.NewHandler(sapClient, logger)
+	
+	var orderServiceClient *orders.OrderServiceClient
+	if orderServiceURL != "" {
+		orderServiceClient = orders.NewOrderServiceClient(orderServiceURL, logger)
+		logger.WithField("url", orderServiceURL).Info("Order service client configured")
+	} else {
+		logger.Info("Order service URL not configured - running in Phase 1 mode")
+	}
+	
+	orderHandler := orders.NewHandler(sapClient, orderServiceClient, logger)
 
 	router := mux.NewRouter()
 	router.HandleFunc("/health", orderHandler.HealthCheck).Methods("GET")
 	router.HandleFunc("/orders", orderHandler.CreateOrder).Methods("POST")
+	router.HandleFunc("/compare/orders", orderHandler.CompareOrders).Methods("GET")
+	router.HandleFunc("/compare/orders/{id}", orderHandler.CompareOrder).Methods("GET")
 
 	router.Use(loggingMiddleware(logger))
 
