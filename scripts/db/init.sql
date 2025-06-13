@@ -1,3 +1,8 @@
+-- Database initialization script for Order Service
+-- This script runs automatically when PostgreSQL container starts
+-- Database: orderservice
+-- User: orderservice
+
 -- Create orders table
 CREATE TABLE IF NOT EXISTS orders (
     id VARCHAR(255) PRIMARY KEY,

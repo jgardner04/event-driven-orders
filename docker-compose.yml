@@ -5,17 +5,18 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_DB: orders
+      POSTGRES_DB: orderservice
       POSTGRES_USER: orderservice
       POSTGRES_PASSWORD: orderservice
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./scripts/db/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - strangler-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U orderservice"]
+      test: ["CMD-SHELL", "pg_isready -U orderservice -d orderservice"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -65,7 +66,7 @@ services:
       - DB_PORT=5432
       - DB_USER=orderservice
       - DB_PASSWORD=orderservice
-      - DB_NAME=orders
+      - DB_NAME=orderservice
       - KAFKA_BROKERS=kafka:29092
     depends_on:
       postgres:
