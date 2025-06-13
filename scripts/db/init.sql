@@ -3,6 +3,13 @@
 -- Database: orderservice
 -- User: orderservice
 
+-- Ensure database exists (this is mostly redundant since POSTGRES_DB creates it,
+-- but included for completeness)
+SELECT 'CREATE DATABASE orderservice' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'orderservice')\gexec
+
+-- Connect to the orderservice database
+\c orderservice;
+
 -- Create orders table
 CREATE TABLE IF NOT EXISTS orders (
     id VARCHAR(255) PRIMARY KEY,
