@@ -55,14 +55,14 @@ type CircuitBreaker struct {
 	failures   int
 	requests   int
 	lastFailTime time.Time
-	
+
 	// Metrics
 	totalRequests   int64
 	totalFailures   int64
 	totalSuccesses  int64
 	stateChanges    int64
 	lastStateChange time.Time
-	
+
 	logger *logrus.Logger
 }
 
@@ -72,7 +72,7 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		config.Name = "unnamed"
 		logger.Warn("Circuit breaker created without name, using 'unnamed'")
 	}
-	
+
 	if config.MaxFailures <= 0 {
 		logger.WithFields(logrus.Fields{
 			"circuit_breaker": config.Name,
@@ -81,7 +81,7 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		}).Warn("Invalid MaxFailures value, using default")
 		config.MaxFailures = 5
 	}
-	
+
 	if config.Timeout <= 0 {
 		logger.WithFields(logrus.Fields{
 			"circuit_breaker": config.Name,
@@ -90,7 +90,7 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		}).Warn("Invalid Timeout value, using default")
 		config.Timeout = 30 * time.Second
 	}
-	
+
 	if config.MaxRequests <= 0 {
 		logger.WithFields(logrus.Fields{
 			"circuit_breaker": config.Name,
@@ -99,7 +99,7 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		}).Warn("Invalid MaxRequests value, using default")
 		config.MaxRequests = 1
 	}
-	
+
 	// Validate reasonable upper bounds to prevent resource exhaustion
 	if config.MaxFailures > 1000 {
 		logger.WithFields(logrus.Fields{
@@ -109,7 +109,7 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		}).Warn("MaxFailures too high, capping at maximum")
 		config.MaxFailures = 1000
 	}
-	
+
 	if config.Timeout > 10*time.Minute {
 		logger.WithFields(logrus.Fields{
 			"circuit_breaker": config.Name,
@@ -118,7 +118,7 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		}).Warn("Timeout too high, capping at maximum")
 		config.Timeout = 10 * time.Minute
 	}
-	
+
 	if config.MaxRequests > 100 {
 		logger.WithFields(logrus.Fields{
 			"circuit_breaker": config.Name,
@@ -142,7 +142,7 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 func (cb *CircuitBreaker) Execute(fn func() error) error {
 	// Pre-execution check with lock
 	cb.mutex.Lock()
-	
+
 	if cb.state == StateOpen {
 		if time.Since(cb.lastFailTime) > cb.timeout {
 			cb.setState(StateHalfOpen)
@@ -172,10 +172,16 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 	cb.totalRequests++
 	cb.requests++
 	cb.mutex.Unlock()
-	
-	// Execute the function without holding the lock
-	err := fn()
-	
+
+	// Execute function concurrently and wait for result via channel
+	resultChan := make(chan error, 1)
+	go func() {
+		resultChan <- fn()
+	}()
+
+	// Wait for execution to complete
+	err := <-resultChan
+
 	// Post-execution processing with lock
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
@@ -193,7 +199,7 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 
 func (cb *CircuitBreaker) onSuccess() {
 	cb.failures = 0
-	
+
 	if cb.state == StateHalfOpen {
 		cb.setState(StateClosed)
 		cb.requests = 0
@@ -203,7 +209,7 @@ func (cb *CircuitBreaker) onSuccess() {
 func (cb *CircuitBreaker) onFailure() {
 	cb.failures++
 	cb.lastFailTime = time.Now()
-	
+
 	if cb.state == StateClosed && cb.failures >= cb.maxFailures {
 		cb.setState(StateOpen)
 		cb.requests = 0
@@ -217,18 +223,18 @@ func (cb *CircuitBreaker) setState(newState State) {
 	if cb.state == newState {
 		return
 	}
-	
+
 	oldState := cb.state
 	cb.state = newState
 	cb.stateChanges++
 	cb.lastStateChange = time.Now()
-	
+
 	cb.logger.WithFields(logrus.Fields{
 		"circuit_breaker": cb.name,
 		"from_state": oldState.String(),
 		"to_state": newState.String(),
 	}).Info("Circuit breaker state changed")
-	
+
 	if cb.onStateChange != nil {
 		go cb.executeStateChangeCallback(cb.name, oldState, newState)
 	}
@@ -238,10 +244,10 @@ func (cb *CircuitBreaker) executeStateChangeCallback(name string, from State, to
 	// Create context with timeout to prevent callback from hanging indefinitely
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	// Channel to signal callback completion
 	done := make(chan struct{})
-	
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -254,10 +260,10 @@ func (cb *CircuitBreaker) executeStateChangeCallback(name string, from State, to
 			}
 			close(done)
 		}()
-		
+
 		cb.onStateChange(name, from, to)
 	}()
-	
+
 	select {
 	case <-done:
 		// Callback completed successfully
@@ -280,7 +286,7 @@ func (cb *CircuitBreaker) State() State {
 func (cb *CircuitBreaker) Metrics() map[string]interface{} {
 	cb.mutex.RLock()
 	defer cb.mutex.RUnlock()
-	
+
 	return map[string]interface{}{
 		"name":             cb.name,
 		"state":            cb.state.String(),
@@ -301,7 +307,7 @@ func (cb *CircuitBreaker) Metrics() map[string]interface{} {
 func (cb *CircuitBreaker) Reset() {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
-	
+
 	cb.setState(StateClosed)
 	cb.failures = 0
 	cb.requests = 0
@@ -309,6 +315,6 @@ func (cb *CircuitBreaker) Reset() {
 }
 
 func (cb *CircuitBreaker) String() string {
-	return fmt.Sprintf("CircuitBreaker(name=%s, state=%s, failures=%d/%d)", 
+	return fmt.Sprintf("CircuitBreaker(name=%s, state=%s, failures=%d/%d)",
 		cb.name, cb.state.String(), cb.failures, cb.maxFailures)
 }
