@@ -31,13 +31,13 @@ func main() {
 	cbManager := circuitbreaker.NewManager(logger)
 	
 	// Configure circuit breaker settings for SAP
-	sapCBConfig := getSAPCircuitBreakerConfig()
+	sapCBConfig := getSAPCircuitBreakerConfig(logger)
 	sapClient := sapClientWithCircuitBreaker(sapURL, logger, cbManager, sapCBConfig)
 	
 	var orderServiceClient *orders.OrderServiceClient
 	if orderServiceURL != "" {
 		// Configure circuit breaker settings for Order Service
-		orderServiceCBConfig := getOrderServiceCircuitBreakerConfig()
+		orderServiceCBConfig := getOrderServiceCircuitBreakerConfig(logger)
 		orderServiceClient = orderServiceClientWithCircuitBreaker(orderServiceURL, logger, cbManager, orderServiceCBConfig)
 		logger.WithField("url", orderServiceURL).Info("Order service client configured")
 	} else {
@@ -53,7 +53,7 @@ func main() {
 
 	router := mux.NewRouter()
 	router.HandleFunc("/health", orderHandler.HealthCheck).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/health/all", allServicesHealthCheck(sapClient, orderServiceClient, logger)).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/health/all", allServicesHealthCheck(sapClient, orderServiceClient, cbManager, logger)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/orders", orderHandler.CreateOrder).Methods("POST", "OPTIONS")
 	router.HandleFunc("/orders", orderHandler.GetOrders).Methods("GET", "OPTIONS")
 	router.HandleFunc("/compare/orders", orderHandler.CompareOrders).Methods("GET", "OPTIONS")
@@ -144,7 +144,7 @@ func corsMiddleware() mux.MiddlewareFunc {
 	}
 }
 
-func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.OrderServiceClient, logger *logrus.Logger) http.HandlerFunc {
+func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.OrderServiceClient, cbManager *circuitbreaker.Manager, logger *logrus.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		healthStatus := make(map[string]interface{})
 		
@@ -159,9 +159,18 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 		// Check order service health
 		if orderServiceClient != nil {
 			start := time.Now()
+			orderServiceCB := cbManager.Get("order-service")
+			
 			// Try to get orders to check if service is healthy
 			_, err := orderServiceClient.GetOrders()
 			responseTime := time.Since(start).Milliseconds()
+			
+			cbState := "unknown"
+			cbMetrics := map[string]interface{}{}
+			if orderServiceCB != nil {
+				cbState = orderServiceCB.State().String()
+				cbMetrics = orderServiceCB.Metrics()
+			}
 			
 			if err == nil {
 				healthStatus["order_service"] = map[string]interface{}{
@@ -169,6 +178,10 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 					"service": "order_service",
 					"response_time": responseTime,
 					"last_check": time.Now().Format(time.RFC3339),
+					"circuit_breaker": map[string]interface{}{
+						"state": cbState,
+						"metrics": cbMetrics,
+					},
 				}
 			} else {
 				healthStatus["order_service"] = map[string]interface{}{
@@ -177,6 +190,10 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 					"error": err.Error(),
 					"response_time": responseTime,
 					"last_check": time.Now().Format(time.RFC3339),
+					"circuit_breaker": map[string]interface{}{
+						"state": cbState,
+						"metrics": cbMetrics,
+					},
 				}
 			}
 		} else {
@@ -185,13 +202,25 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 				"service": "order_service",
 				"error": "Service not configured",
 				"last_check": time.Now().Format(time.RFC3339),
+				"circuit_breaker": map[string]interface{}{
+					"state": "not_configured",
+					"metrics": map[string]interface{}{},
+				},
 			}
 		}
 		
 		// Check SAP health
 		start := time.Now()
+		sapCB := cbManager.Get("sap")
 		_, err := sapClient.GetOrders()
 		responseTime := time.Since(start).Milliseconds()
+		
+		cbState := "unknown"
+		cbMetrics := map[string]interface{}{}
+		if sapCB != nil {
+			cbState = sapCB.State().String()
+			cbMetrics = sapCB.Metrics()
+		}
 		
 		if err == nil {
 			healthStatus["sap_mock"] = map[string]interface{}{
@@ -199,6 +228,10 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 				"service": "sap_mock",
 				"response_time": responseTime,
 				"last_check": time.Now().Format(time.RFC3339),
+				"circuit_breaker": map[string]interface{}{
+					"state": cbState,
+					"metrics": cbMetrics,
+				},
 			}
 		} else {
 			healthStatus["sap_mock"] = map[string]interface{}{
@@ -207,6 +240,10 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 				"error": err.Error(),
 				"response_time": responseTime,
 				"last_check": time.Now().Format(time.RFC3339),
+				"circuit_breaker": map[string]interface{}{
+					"state": cbState,
+					"metrics": cbMetrics,
+				},
 			}
 		}
 		
@@ -268,10 +305,36 @@ func resetCircuitBreaker(cbManager *circuitbreaker.Manager, logger *logrus.Logge
 	}
 }
 
-func getSAPCircuitBreakerConfig() circuitbreaker.Config {
-	maxFailures, _ := strconv.Atoi(getEnv("SAP_CB_MAX_FAILURES", "3"))
-	timeout, _ := strconv.Atoi(getEnv("SAP_CB_TIMEOUT_SECONDS", "10"))
-	maxRequests, _ := strconv.Atoi(getEnv("SAP_CB_MAX_REQUESTS", "2"))
+func parseIntWithDefault(envVar, defaultValue string, logger *logrus.Logger) int {
+	value := getEnv(envVar, defaultValue)
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"env_var": envVar,
+			"value": value,
+			"default": defaultValue,
+			"error": err.Error(),
+		}).Warn("Failed to parse environment variable as integer, using default")
+		
+		// Parse the default value - this should always work
+		defaultParsed, defaultErr := strconv.Atoi(defaultValue)
+		if defaultErr != nil {
+			logger.WithFields(logrus.Fields{
+				"env_var": envVar,
+				"default": defaultValue,
+				"error": defaultErr.Error(),
+			}).Error("Failed to parse default value as integer")
+			return 1 // Fallback to safe default
+		}
+		return defaultParsed
+	}
+	return parsed
+}
+
+func getSAPCircuitBreakerConfig(logger *logrus.Logger) circuitbreaker.Config {
+	maxFailures := parseIntWithDefault("SAP_CB_MAX_FAILURES", "3", logger)
+	timeout := parseIntWithDefault("SAP_CB_TIMEOUT_SECONDS", "10", logger)
+	maxRequests := parseIntWithDefault("SAP_CB_MAX_REQUESTS", "2", logger)
 	
 	return circuitbreaker.Config{
 		MaxFailures: maxFailures,
@@ -280,10 +343,10 @@ func getSAPCircuitBreakerConfig() circuitbreaker.Config {
 	}
 }
 
-func getOrderServiceCircuitBreakerConfig() circuitbreaker.Config {
-	maxFailures, _ := strconv.Atoi(getEnv("ORDER_SERVICE_CB_MAX_FAILURES", "5"))
-	timeout, _ := strconv.Atoi(getEnv("ORDER_SERVICE_CB_TIMEOUT_SECONDS", "15"))
-	maxRequests, _ := strconv.Atoi(getEnv("ORDER_SERVICE_CB_MAX_REQUESTS", "3"))
+func getOrderServiceCircuitBreakerConfig(logger *logrus.Logger) circuitbreaker.Config {
+	maxFailures := parseIntWithDefault("ORDER_SERVICE_CB_MAX_FAILURES", "5", logger)
+	timeout := parseIntWithDefault("ORDER_SERVICE_CB_TIMEOUT_SECONDS", "15", logger)
+	maxRequests := parseIntWithDefault("ORDER_SERVICE_CB_MAX_REQUESTS", "3", logger)
 	
 	return circuitbreaker.Config{
 		MaxFailures: maxFailures,

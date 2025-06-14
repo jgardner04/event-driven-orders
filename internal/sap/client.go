@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/jogardn/strangler-demo/internal/circuitbreaker"
@@ -20,16 +22,16 @@ type Client struct {
 }
 
 func NewClient(baseURL string, logger *logrus.Logger, cbManager *circuitbreaker.Manager) *Client {
-	cb := cbManager.GetOrCreate("sap", circuitbreaker.Config{
-		MaxFailures: 3,
-		Timeout:     10 * time.Second,
-		MaxRequests: 2,
-	})
+	cb := cbManager.Get("sap")
+	
+	// HTTP timeout should be shorter than circuit breaker timeout for proper coordination
+	// Use 80% of circuit breaker timeout, with a minimum of 5 seconds
+	httpTimeout := getHTTPTimeout("SAP_HTTP_TIMEOUT_SECONDS", "8", logger)
 	
 	return &Client{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: httpTimeout,
 		},
 		logger:         logger,
 		circuitBreaker: cb,
@@ -181,4 +183,43 @@ func (c *Client) GetOrder(orderID string) (*models.Order, error) {
 	}
 
 	return order, nil
+}
+
+func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Duration {
+	value := os.Getenv(envVar)
+	if value == "" {
+		value = defaultValue
+	}
+	
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds <= 0 {
+		logger.WithFields(logrus.Fields{
+			"env_var": envVar,
+			"value": value,
+			"default": defaultValue,
+			"error": err,
+		}).Warn("Invalid HTTP timeout value, using default")
+		
+		defaultSeconds, defaultErr := strconv.Atoi(defaultValue)
+		if defaultErr != nil || defaultSeconds <= 0 {
+			logger.WithFields(logrus.Fields{
+				"env_var": envVar,
+				"default": defaultValue,
+			}).Error("Invalid default HTTP timeout, using 5 seconds")
+			return 5 * time.Second
+		}
+		return time.Duration(defaultSeconds) * time.Second
+	}
+	
+	// Cap at reasonable maximum
+	if seconds > 300 { // 5 minutes
+		logger.WithFields(logrus.Fields{
+			"env_var": envVar,
+			"value": seconds,
+			"max_allowed": 300,
+		}).Warn("HTTP timeout too high, capping at 5 minutes")
+		seconds = 300
+	}
+	
+	return time.Duration(seconds) * time.Second
 }

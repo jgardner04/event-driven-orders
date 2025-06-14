@@ -1,6 +1,7 @@
 package circuitbreaker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -66,14 +67,65 @@ type CircuitBreaker struct {
 }
 
 func New(config Config, logger *logrus.Logger) *CircuitBreaker {
-	if config.MaxFailures == 0 {
+	// Validate and sanitize configuration values
+	if config.Name == "" {
+		config.Name = "unnamed"
+		logger.Warn("Circuit breaker created without name, using 'unnamed'")
+	}
+	
+	if config.MaxFailures <= 0 {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"invalid_value": config.MaxFailures,
+			"default_value": 5,
+		}).Warn("Invalid MaxFailures value, using default")
 		config.MaxFailures = 5
 	}
-	if config.Timeout == 0 {
+	
+	if config.Timeout <= 0 {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"invalid_value": config.Timeout,
+			"default_value": "30s",
+		}).Warn("Invalid Timeout value, using default")
 		config.Timeout = 30 * time.Second
 	}
-	if config.MaxRequests == 0 {
+	
+	if config.MaxRequests <= 0 {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"invalid_value": config.MaxRequests,
+			"default_value": 1,
+		}).Warn("Invalid MaxRequests value, using default")
 		config.MaxRequests = 1
+	}
+	
+	// Validate reasonable upper bounds to prevent resource exhaustion
+	if config.MaxFailures > 1000 {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"invalid_value": config.MaxFailures,
+			"max_allowed": 1000,
+		}).Warn("MaxFailures too high, capping at maximum")
+		config.MaxFailures = 1000
+	}
+	
+	if config.Timeout > 10*time.Minute {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"invalid_value": config.Timeout,
+			"max_allowed": "10m",
+		}).Warn("Timeout too high, capping at maximum")
+		config.Timeout = 10 * time.Minute
+	}
+	
+	if config.MaxRequests > 100 {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"invalid_value": config.MaxRequests,
+			"max_allowed": 100,
+		}).Warn("MaxRequests too high, capping at maximum")
+		config.MaxRequests = 100
 	}
 
 	return &CircuitBreaker{
@@ -88,10 +140,8 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 }
 
 func (cb *CircuitBreaker) Execute(fn func() error) error {
+	// Pre-execution check with lock
 	cb.mutex.Lock()
-	defer cb.mutex.Unlock()
-
-	cb.totalRequests++
 	
 	if cb.state == StateOpen {
 		if time.Since(cb.lastFailTime) > cb.timeout {
@@ -102,6 +152,7 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 				"circuit_breaker": cb.name,
 				"state": cb.state.String(),
 			}).Debug("Circuit breaker is open, rejecting request")
+			cb.mutex.Unlock()
 			return ErrCircuitBreakerOpen
 		}
 	}
@@ -113,15 +164,21 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 			"requests": cb.requests,
 			"max_requests": cb.maxRequests,
 		}).Debug("Circuit breaker half-open max requests reached")
+		cb.mutex.Unlock()
 		return ErrCircuitBreakerOpen
 	}
 
+	// Only increment totalRequests for requests that will be attempted
+	cb.totalRequests++
 	cb.requests++
-	
-	// Execute the function
 	cb.mutex.Unlock()
+	
+	// Execute the function without holding the lock
 	err := fn()
+	
+	// Post-execution processing with lock
 	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
 
 	if err != nil {
 		cb.onFailure()
@@ -173,7 +230,44 @@ func (cb *CircuitBreaker) setState(newState State) {
 	}).Info("Circuit breaker state changed")
 	
 	if cb.onStateChange != nil {
-		go cb.onStateChange(cb.name, oldState, newState)
+		go cb.executeStateChangeCallback(cb.name, oldState, newState)
+	}
+}
+
+func (cb *CircuitBreaker) executeStateChangeCallback(name string, from State, to State) {
+	// Create context with timeout to prevent callback from hanging indefinitely
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	// Channel to signal callback completion
+	done := make(chan struct{})
+	
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				cb.logger.WithFields(logrus.Fields{
+					"circuit_breaker": name,
+					"from_state": from.String(),
+					"to_state": to.String(),
+					"panic": r,
+				}).Error("Circuit breaker state change callback panicked")
+			}
+			close(done)
+		}()
+		
+		cb.onStateChange(name, from, to)
+	}()
+	
+	select {
+	case <-done:
+		// Callback completed successfully
+	case <-ctx.Done():
+		cb.logger.WithFields(logrus.Fields{
+			"circuit_breaker": name,
+			"from_state": from.String(),
+			"to_state": to.String(),
+			"timeout": "5s",
+		}).Warn("Circuit breaker state change callback timed out")
 	}
 }
 
