@@ -22,7 +22,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           timeout_minutes: "90"
-          max_turns: "10"
+          max_turns: "20"
           direct_prompt: |
             Please review this pull request and provide comprehensive feedback.
 
