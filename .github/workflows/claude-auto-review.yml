@@ -21,10 +21,12 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          timeout_minutes: "60"
-          max_turns: "3"
+          timeout_minutes: "90"
+          max_turns: "5"
           direct_prompt: |
             Please review this pull request and provide comprehensive feedback.
+
+            IMPORTANT: Use the TodoWrite tool to create a review checklist at the start, then mark each item as completed as you work through the review.
 
             Focus on:
             - Code quality and best practices
@@ -34,12 +36,25 @@ jobs:
             - Test coverage
             - Documentation updates if needed
 
-            Provide constructive feedback with specific suggestions for improvement.
-            Use inline comments to highlight specific areas of concern.
+            Process:
+            1. Create todo list with specific review tasks
+            2. Mark each task as in_progress while working on it
+            3. Mark each task as completed after providing feedback
+            4. Provide constructive feedback with specific suggestions for improvement
+            5. Use inline comments to highlight specific areas of concern
+            6. Complete the review by marking all tasks as done
+
+            After completing your review, update the todo list to show all tasks as completed.
           allowed_tools: |
             mcp__github__create_pending_pull_request_review
             mcp__github__add_pull_request_review_comment_to_pending_review
             mcp__github__submit_pending_pull_request_review
             mcp__github__get_pull_request_diff
+            mcp__github__update_pull_request_review_comment
+            TodoWrite
+            TodoRead
             Bash(go test ./...)
             Bash(go mod tidy)
+            Bash(go build ./...)
+            Bash(go vet ./...)
+            Bash(go fmt ./...)
