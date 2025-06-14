@@ -10,7 +10,9 @@ This project demonstrates how to implement the strangler pattern by building a p
 
 ✅ **Phase 1 Complete**: Basic proxy that passes requests to SAP with logging  
 ✅ **Phase 2 Complete**: Dual-write pattern with new order service, PostgreSQL, and Kafka events  
-✅ **Phase 3 Complete**: Event-driven architecture with SAP consuming from Kafka
+✅ **Phase 3 Complete**: Event-driven architecture with SAP consuming from Kafka  
+✅ **Dashboard**: Real-time monitoring with WebSocket updates  
+✅ **Data Tools**: Migration and validation CLI tools
 
 ## Architecture
 
@@ -45,26 +47,41 @@ This project demonstrates how to implement the strangler pattern by building a p
 
 ## Tech Stack
 
+**Backend:**
 - **Go 1.21+** - Main programming language
 - **PostgreSQL** - Order service database
 - **Kafka** - Event streaming platform
-- **Gorilla Mux** - HTTP routing
+- **Gorilla Mux** - HTTP routing and WebSocket
 - **Logrus** - Structured logging
-- **Docker & Docker Compose** - Containerization
 - **Sarama** - Kafka client library
+
+**Frontend:**
+- **Next.js** - Dashboard framework
+- **TypeScript** - Type-safe frontend development
+- **Tailwind CSS** - Styling
+- **WebSocket** - Real-time updates
+
+**Infrastructure:**
+- **Docker & Docker Compose** - Containerization
+- **Nginx** - Load balancing (planned)
 
 ## Project Structure
 
 ```
 strangler-demo/
 ├── cmd/
-│   ├── proxy/          # Main proxy service
+│   ├── proxy/          # Main proxy service with WebSocket
 │   ├── order-service/  # New order microservice  
-│   └── sap-mock/       # Mock SAP service
+│   ├── sap-mock/       # Mock SAP service
+│   └── data-tools/     # CLI for data migration & validation
+├── dashboard/          # Next.js real-time monitoring dashboard
 ├── internal/
 │   ├── orders/         # Order handling logic
 │   ├── events/         # Kafka event publishing
-│   └── sap/            # SAP client integration
+│   ├── sap/            # SAP client integration
+│   ├── websocket/      # WebSocket hub for real-time updates
+│   ├── migration/      # Data migration utilities
+│   └── comparison/     # Data validation and comparison
 ├── pkg/
 │   └── models/         # Shared data models
 ├── scripts/            # Test and demo scripts
@@ -86,7 +103,22 @@ strangler-demo/
 docker-compose up --build
 ```
 
-### 2. Test the Implementation
+### 2. Access the Dashboard
+
+The real-time monitoring dashboard is available at:
+
+- **Dashboard**: http://localhost:3000
+- **API Proxy**: http://localhost:8080  
+- **Order Service**: http://localhost:8081
+
+The dashboard provides:
+- ✅ Real-time order monitoring with WebSocket updates
+- ✅ Service health status across all components
+- ✅ Performance metrics and charts
+- ✅ Load testing interface
+- ✅ Data synchronization comparison tools
+
+### 3. Test the Implementation
 
 ```bash
 # Basic functionality test

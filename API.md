@@ -212,6 +212,65 @@ Checks the health status of the proxy service.
 }
 ```
 
+#### All Services Health Check
+
+Checks the health status of all services through the proxy.
+
+**Endpoint**: `GET /api/health/all`
+
+**Response** (200 OK):
+```json
+{
+  "proxy": {
+    "status": "healthy",
+    "service": "proxy",
+    "response_time": 15,
+    "last_check": "2025-06-14T10:30:00Z"
+  },
+  "order_service": {
+    "status": "healthy", 
+    "service": "order_service",
+    "response_time": 25,
+    "last_check": "2025-06-14T10:30:00Z"
+  },
+  "sap_mock": {
+    "status": "healthy",
+    "service": "sap_mock", 
+    "response_time": 150,
+    "last_check": "2025-06-14T10:30:00Z"
+  }
+}
+```
+
+#### Get Orders
+
+Retrieves all orders from the order service through the proxy.
+
+**Endpoint**: `GET /orders`
+
+**Headers**:
+- `Cache-Control: no-cache, no-store, must-revalidate` (response)
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "orders": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "customer_id": "CUST-12345",
+      "items": [...],
+      "total_amount": 1009.85,
+      "delivery_date": "2025-06-20T00:00:00Z",
+      "status": "confirmed",
+      "created_at": "2025-06-13T10:30:00Z"
+    }
+  ],
+  "count": 1,
+  "timestamp": "2025-06-14T10:30:00Z"
+}
+```
+
 #### SAP Mock Health Check
 
 Checks the health status of the SAP mock service (internal use).
@@ -226,11 +285,111 @@ Checks the health status of the SAP mock service (internal use).
 }
 ```
 
+### WebSocket Real-Time Updates
+
+Real-time WebSocket connection for receiving live updates about orders, metrics, and health status.
+
+**Endpoint**: `WS /ws`
+
+**Protocol**: WebSocket (ws:// or wss://)
+
+**Connection URL**: `ws://localhost:8080/ws`
+
+#### Supported Message Types
+
+**1. Order Created Events**:
+```json
+{
+  "type": "order_created",
+  "order": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "customer_id": "CUST-12345",
+    "items": [...],
+    "total_amount": 1009.85,
+    "status": "pending",
+    "created_at": "2025-06-14T10:30:00Z"
+  },
+  "source": "proxy",
+  "processing_time": 45
+}
+```
+
+**2. Metrics Updates**:
+```json
+{
+  "type": "metrics_update",
+  "timestamp": "2025-06-14T10:30:00Z",
+  "proxy": {
+    "requests_per_second": 75,
+    "avg_response_time": 125,
+    "error_rate": 1.2,
+    "active_connections": 25
+  },
+  "order_service": {
+    "orders_created": 1250,
+    "avg_processing_time": 45,
+    "database_connections": 8,
+    "kafka_events_published": 1250
+  }
+}
+```
+
+**3. Health Status Updates**:
+```json
+{
+  "type": "health_update",
+  "proxy": {
+    "status": "healthy",
+    "response_time": 15
+  },
+  "order_service": {
+    "status": "healthy", 
+    "response_time": 25
+  },
+  "sap_mock": {
+    "status": "healthy",
+    "response_time": 150
+  }
+}
+```
+
+#### Client Connection Example (JavaScript)
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
+
+ws.onopen = () => {
+  console.log('Connected to real-time updates');
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Received:', data.type, data);
+  
+  switch(data.type) {
+    case 'order_created':
+      updateOrdersList(data.order);
+      break;
+    case 'metrics_update':
+      updateMetrics(data);
+      break;
+    case 'health_update':
+      updateHealthStatus(data);
+      break;
+  }
+};
+
+ws.onclose = () => {
+  console.log('WebSocket connection closed');
+};
+```
+
 ## Response Times
 
 - **Proxy Processing**: < 50ms
 - **SAP Mock Delay**: 1-3 seconds (simulated)
 - **Total Response Time**: 1-3 seconds
+- **WebSocket Messages**: < 10ms
 
 ## Rate Limiting
 
