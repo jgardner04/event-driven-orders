@@ -23,11 +23,12 @@ type Client struct {
 
 func NewClient(baseURL string, logger *logrus.Logger, cbManager *circuitbreaker.Manager) *Client {
 	cb := cbManager.Get("sap")
-	
+
 	// HTTP timeout should be shorter than circuit breaker timeout for proper coordination
-	// Use 80% of circuit breaker timeout, with a minimum of 5 seconds
-	httpTimeout := getHTTPTimeout("SAP_HTTP_TIMEOUT_SECONDS", "8", logger)
-	
+	// SAP typically has slower response times due to legacy system complexity
+	// Default: 10 seconds (vs 15 seconds for modern Order Service)
+	httpTimeout := getHTTPTimeout("SAP_HTTP_TIMEOUT_SECONDS", "10", logger)
+
 	return &Client{
 		baseURL: baseURL,
 		httpClient: &http.Client{
@@ -40,7 +41,7 @@ func NewClient(baseURL string, logger *logrus.Logger, cbManager *circuitbreaker.
 
 func (c *Client) CreateOrder(order *models.Order) (*models.OrderResponse, error) {
 	c.logger.WithField("order_id", order.ID).Info("Sending order to SAP")
-	
+
 	var orderResp *models.OrderResponse
 	err := c.circuitBreaker.Execute(func() error {
 		jsonData, err := json.Marshal(order)
@@ -71,7 +72,7 @@ func (c *Client) CreateOrder(order *models.Order) (*models.OrderResponse, error)
 		}
 
 		orderResp = &respData
-		
+
 		c.logger.WithFields(logrus.Fields{
 			"order_id": order.ID,
 			"status":   resp.StatusCode,
@@ -95,7 +96,7 @@ func (c *Client) CreateOrder(order *models.Order) (*models.OrderResponse, error)
 
 func (c *Client) GetOrders() ([]models.Order, error) {
 	c.logger.Info("Fetching orders from SAP")
-	
+
 	var orders []models.Order
 	err := c.circuitBreaker.Execute(func() error {
 		req, err := http.NewRequest("GET", c.baseURL+"/orders", nil)
@@ -141,7 +142,7 @@ func (c *Client) GetOrders() ([]models.Order, error) {
 
 func (c *Client) GetOrder(orderID string) (*models.Order, error) {
 	c.logger.WithField("order_id", orderID).Info("Fetching order from SAP")
-	
+
 	var order *models.Order
 	err := c.circuitBreaker.Execute(func() error {
 		req, err := http.NewRequest("GET", c.baseURL+"/orders/"+orderID, nil)
@@ -190,7 +191,7 @@ func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Dur
 	if value == "" {
 		value = defaultValue
 	}
-	
+
 	seconds, err := strconv.Atoi(value)
 	if err != nil || seconds <= 0 {
 		logger.WithFields(logrus.Fields{
@@ -199,7 +200,7 @@ func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Dur
 			"default": defaultValue,
 			"error": err,
 		}).Warn("Invalid HTTP timeout value, using default")
-		
+
 		defaultSeconds, defaultErr := strconv.Atoi(defaultValue)
 		if defaultErr != nil || defaultSeconds <= 0 {
 			logger.WithFields(logrus.Fields{
@@ -210,7 +211,7 @@ func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Dur
 		}
 		return time.Duration(defaultSeconds) * time.Second
 	}
-	
+
 	// Cap at reasonable maximum
 	if seconds > 300 { // 5 minutes
 		logger.WithFields(logrus.Fields{
@@ -220,6 +221,6 @@ func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Dur
 		}).Warn("HTTP timeout too high, capping at 5 minutes")
 		seconds = 300
 	}
-	
+
 	return time.Duration(seconds) * time.Second
 }

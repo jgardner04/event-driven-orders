@@ -23,11 +23,12 @@ type OrderServiceClient struct {
 
 func NewOrderServiceClient(baseURL string, logger *logrus.Logger, cbManager *circuitbreaker.Manager) *OrderServiceClient {
 	cb := cbManager.Get("order-service")
-	
+
 	// HTTP timeout should be shorter than circuit breaker timeout for proper coordination
-	// Use 80% of circuit breaker timeout, with a minimum of 5 seconds
-	httpTimeout := getHTTPTimeout("ORDER_SERVICE_HTTP_TIMEOUT_SECONDS", "12", logger)
-	
+	// Order Service is a modern microservice with faster expected response times
+	// Default: 15 seconds (matches circuit breaker timeout for proper coordination)
+	httpTimeout := getHTTPTimeout("ORDER_SERVICE_HTTP_TIMEOUT_SECONDS", "15", logger)
+
 	return &OrderServiceClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
@@ -40,7 +41,7 @@ func NewOrderServiceClient(baseURL string, logger *logrus.Logger, cbManager *cir
 
 func (c *OrderServiceClient) CreateOrder(order *models.Order) (*models.OrderResponse, error) {
 	c.logger.WithField("order_id", order.ID).Info("Sending order to order service")
-	
+
 	var orderResp *models.OrderResponse
 	err := c.circuitBreaker.Execute(func() error {
 		jsonData, err := json.Marshal(order)
@@ -94,7 +95,7 @@ func (c *OrderServiceClient) CreateOrder(order *models.Order) (*models.OrderResp
 
 func (c *OrderServiceClient) CreateOrderHistorical(order *models.Order) (*models.OrderResponse, error) {
 	c.logger.WithField("order_id", order.ID).Info("Sending historical order to order service")
-	
+
 	var orderResp *models.OrderResponse
 	err := c.circuitBreaker.Execute(func() error {
 		jsonData, err := json.Marshal(order)
@@ -148,7 +149,7 @@ func (c *OrderServiceClient) CreateOrderHistorical(order *models.Order) (*models
 
 func (c *OrderServiceClient) GetOrders() ([]models.Order, error) {
 	c.logger.Info("Fetching orders from order service")
-	
+
 	var orders []models.Order
 	err := c.circuitBreaker.Execute(func() error {
 		req, err := http.NewRequest("GET", c.baseURL+"/orders", nil)
@@ -156,7 +157,7 @@ func (c *OrderServiceClient) GetOrders() ([]models.Order, error) {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
 
-		resp, err := c.httpClient.Do(req)  
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to send request to order service: %w", err)
 		}
@@ -194,7 +195,7 @@ func (c *OrderServiceClient) GetOrders() ([]models.Order, error) {
 
 func (c *OrderServiceClient) GetOrder(orderID string) (*models.Order, error) {
 	c.logger.WithField("order_id", orderID).Info("Fetching order from order service")
-	
+
 	var order *models.Order
 	err := c.circuitBreaker.Execute(func() error {
 		req, err := http.NewRequest("GET", c.baseURL+"/orders/"+orderID, nil)
@@ -243,7 +244,7 @@ func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Dur
 	if value == "" {
 		value = defaultValue
 	}
-	
+
 	seconds, err := strconv.Atoi(value)
 	if err != nil || seconds <= 0 {
 		logger.WithFields(logrus.Fields{
@@ -252,7 +253,7 @@ func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Dur
 			"default": defaultValue,
 			"error": err,
 		}).Warn("Invalid HTTP timeout value, using default")
-		
+
 		defaultSeconds, defaultErr := strconv.Atoi(defaultValue)
 		if defaultErr != nil || defaultSeconds <= 0 {
 			logger.WithFields(logrus.Fields{
@@ -263,7 +264,7 @@ func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Dur
 		}
 		return time.Duration(defaultSeconds) * time.Second
 	}
-	
+
 	// Cap at reasonable maximum
 	if seconds > 300 { // 5 minutes
 		logger.WithFields(logrus.Fields{
@@ -273,6 +274,6 @@ func getHTTPTimeout(envVar, defaultValue string, logger *logrus.Logger) time.Dur
 		}).Warn("HTTP timeout too high, capping at 5 minutes")
 		seconds = 300
 	}
-	
+
 	return time.Duration(seconds) * time.Second
 }

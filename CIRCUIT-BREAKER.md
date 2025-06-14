@@ -25,17 +25,20 @@ Circuit breakers are implemented to protect external service calls to both SAP a
 ## Circuit Breaker States
 
 ### 1. Closed (Normal Operation)
+
 - All requests pass through to the target service
 - Failure count is tracked
 - Circuit opens when failure threshold is exceeded
 
 ### 2. Open (Service Failing)
+
 - All requests fail immediately with `ErrCircuitBreakerOpen`
 - No requests are sent to the failing service
 - Prevents resource exhaustion and cascading failures
 - After timeout period, circuit transitions to Half-Open
 
 ### 3. Half-Open (Testing Recovery)
+
 - Limited number of requests are allowed through
 - If requests succeed, circuit closes
 - If requests fail, circuit opens again
@@ -46,37 +49,59 @@ Circuit breakers are implemented to protect external service calls to both SAP a
 Circuit breakers are configured via environment variables:
 
 ### SAP Circuit Breaker
+
 ```bash
 SAP_CB_MAX_FAILURES=3          # failures before opening circuit
 SAP_CB_TIMEOUT_SECONDS=10      # seconds to wait before testing recovery
 SAP_CB_MAX_REQUESTS=2          # max requests allowed in half-open state
+SAP_HTTP_TIMEOUT_SECONDS=10    # HTTP client timeout (default: 10s)
 ```
 
 ### Order Service Circuit Breaker
+
 ```bash
-ORDER_SERVICE_CB_MAX_FAILURES=5
-ORDER_SERVICE_CB_TIMEOUT_SECONDS=15
-ORDER_SERVICE_CB_MAX_REQUESTS=3
+ORDER_SERVICE_CB_MAX_FAILURES=5      # more tolerant of transient failures
+ORDER_SERVICE_CB_TIMEOUT_SECONDS=15  # longer recovery test period
+ORDER_SERVICE_CB_MAX_REQUESTS=3      # allow more test requests
+ORDER_SERVICE_HTTP_TIMEOUT_SECONDS=15  # HTTP client timeout (default: 15s)
 ```
 
+### Timeout Strategy
+
+**Different timeout values reflect service characteristics:**
+
+- **SAP (Legacy System)**: 10-second timeouts
+
+  - Legacy systems typically have predictable but slower response patterns
+  - Shorter circuit breaker timeout for faster failure detection
+  - Lower failure threshold due to expected stability
+
+- **Order Service (Microservice)**: 15-second timeouts
+  - Modern microservice with variable load patterns
+  - Higher failure threshold to account for transient issues
+  - Longer recovery period to allow for proper health stabilization
+
 ### Default Values
+
 If environment variables are not set, the following defaults are used:
 
-| Service | Max Failures | Timeout | Max Requests |
-|---------|--------------|---------|--------------|
-| SAP | 3 | 10s | 2 |
-| Order Service | 5 | 15s | 3 |
+| Service       | Max Failures | Timeout | Max Requests |
+| ------------- | ------------ | ------- | ------------ |
+| SAP           | 3            | 10s     | 2            |
+| Order Service | 5            | 15s     | 3            |
 
 ## Implementation Details
 
 ### Core Components
 
 **`internal/circuitbreaker/circuit_breaker.go`**
+
 - Main circuit breaker implementation
 - State management and transition logic
 - Metrics collection and failure tracking
 
 **`internal/circuitbreaker/manager.go`**
+
 - Manages multiple circuit breakers
 - Central registry for all circuit breakers
 - Provides factory methods and bulk operations
@@ -84,11 +109,13 @@ If environment variables are not set, the following defaults are used:
 ### Protected Services
 
 **SAP Client (`internal/sap/client.go`)**
+
 - All HTTP calls wrapped with circuit breaker
 - Methods: `CreateOrder()`, `GetOrders()`, `GetOrder()`
 
 **Order Service Client (`internal/orders/client.go`)**
-- All HTTP calls wrapped with circuit breaker  
+
+- All HTTP calls wrapped with circuit breaker
 - Methods: `CreateOrder()`, `CreateOrderHistorical()`, `GetOrders()`, `GetOrder()`
 
 ### Circuit Breaker Execution
@@ -153,11 +180,13 @@ Returns comprehensive metrics for all circuit breakers:
 ### Management Endpoints
 
 **Reset All Circuit Breakers**
+
 ```bash
 curl -X POST http://localhost:8080/circuit-breakers/reset
 ```
 
 **Reset Specific Circuit Breaker**
+
 ```bash
 curl -X POST http://localhost:8080/circuit-breakers/reset/sap
 curl -X POST http://localhost:8080/circuit-breakers/reset/order-service
@@ -174,6 +203,7 @@ Use the provided test script to demonstrate circuit breaker functionality:
 ```
 
 This script:
+
 - Shows initial circuit breaker states
 - Creates test orders to demonstrate normal operation
 - Provides instructions for testing failure scenarios
@@ -182,6 +212,7 @@ This script:
 ### Manual Testing
 
 **1. Normal Operation**
+
 ```bash
 # View circuit breaker metrics
 curl http://localhost:8080/metrics/circuit-breakers | jq
@@ -193,6 +224,7 @@ curl -X POST http://localhost:8080/orders \
 ```
 
 **2. Simulate Service Failure**
+
 ```bash
 # Stop SAP service to trigger circuit breaker
 docker-compose stop sap-mock
@@ -207,6 +239,7 @@ curl http://localhost:8080/metrics/circuit-breakers | jq
 ```
 
 **3. Test Recovery**
+
 ```bash
 # Restart SAP service
 docker-compose start sap-mock
@@ -254,7 +287,7 @@ Circuit breaker events are logged with structured logging:
 
 ```json
 {
-  "level": "error", 
+  "level": "error",
   "msg": "Failed to create order in SAP",
   "order_id": "order-123",
   "error": "circuit breaker is open",
