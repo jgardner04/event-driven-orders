@@ -84,6 +84,12 @@ services:
       dockerfile: cmd/sap-mock/Dockerfile
     ports:
       - "8082:8082"
+    environment:
+      - SAP_PORT=8082
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      kafka:
+        condition: service_started
     networks:
       - strangler-net
 

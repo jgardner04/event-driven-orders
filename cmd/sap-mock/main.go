@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/jogardn/strangler-demo/internal/events"
 	"github.com/jogardn/strangler-demo/pkg/models"
 	"github.com/sirupsen/logrus"
 )
@@ -25,6 +30,44 @@ func NewSAPOrderStore() *SAPOrderStore {
 	}
 }
 
+// Implement OrderEventHandler interface
+func (s *SAPOrderStore) HandleOrderCreated(event events.OrderCreatedEvent) error {
+	// Simulate SAP processing delay
+	delay := time.Duration(rand.Intn(2000)+1000) * time.Millisecond
+	
+	logger := logrus.New()
+	logger.WithFields(logrus.Fields{
+		"order_id": event.OrderID,
+		"delay_ms": delay.Milliseconds(),
+	}).Info("SAP processing order from Kafka event")
+	
+	time.Sleep(delay)
+
+	// Create order from event data
+	order := &models.Order{
+		ID:          event.OrderID,
+		CustomerID:  event.CustomerID,
+		TotalAmount: event.TotalAmount,
+		Status:      "confirmed",
+		CreatedAt:   event.CreatedAt,
+		Items:       []models.OrderItem{}, // Event only has summary data
+	}
+
+	// Store the order
+	s.mutex.Lock()
+	s.orders[order.ID] = order
+	s.mutex.Unlock()
+
+	logger.WithFields(logrus.Fields{
+		"order_id":     order.ID,
+		"customer_id":  order.CustomerID,
+		"total_amount": order.TotalAmount,
+		"total_stored": len(s.orders),
+	}).Info("Order processed from Kafka event and stored in SAP")
+
+	return nil
+}
+
 func main() {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
@@ -32,18 +75,86 @@ func main() {
 	// Create order store
 	store := NewSAPOrderStore()
 
+	// Start Kafka consumer with retry
+	kafkaBrokers := getEnv("KAFKA_BROKERS", "localhost:9092")
+	logger.WithField("brokers", kafkaBrokers).Info("Initializing Kafka consumer...")
+	
+	var consumer *events.KafkaConsumer
+	var err error
+	
+	// Retry connecting to Kafka
+	for i := 0; i < 10; i++ {
+		consumer, err = events.NewKafkaConsumer(kafkaBrokers, "sap-consumer-group", store, logger)
+		if err == nil {
+			logger.Info("Successfully connected to Kafka")
+			break
+		}
+		
+		logger.WithError(err).WithField("attempt", i+1).Warn("Failed to connect to Kafka, retrying...")
+		time.Sleep(5 * time.Second)
+	}
+	
+	if err != nil {
+		logger.WithError(err).Fatal("Failed to create Kafka consumer after retries")
+	}
+
+	// Start consumer in background
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		logger.WithField("brokers", kafkaBrokers).Info("Starting Kafka consumer for order events")
+		if err := consumer.Start(ctx); err != nil {
+			logger.WithError(err).Error("Kafka consumer error")
+		}
+	}()
+
+	// Setup HTTP routes (keeping for backward compatibility and debugging)
 	router := mux.NewRouter()
 	router.HandleFunc("/health", healthCheck).Methods("GET")
-	router.HandleFunc("/orders", createOrder(logger, store)).Methods("POST")
+	router.HandleFunc("/orders", createOrder(logger, store)).Methods("POST") // Legacy endpoint
 	router.HandleFunc("/orders", listOrders(logger, store)).Methods("GET")
 	router.HandleFunc("/orders/{id}", getOrder(logger, store)).Methods("GET")
 
-	port := "8082"
-	logger.WithField("port", port).Info("Starting SAP mock server")
-	
-	if err := http.ListenAndServe(":"+port, router); err != nil {
-		logger.WithError(err).Fatal("Failed to start server")
+	// Start HTTP server
+	port := getEnv("SAP_PORT", "8082")
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: router,
 	}
+
+	// Handle graceful shutdown
+	go func() {
+		logger.WithField("port", port).Info("Starting SAP mock server (Phase 3: Event-driven)")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.WithError(err).Fatal("Failed to start HTTP server")
+		}
+	}()
+
+	// Wait for interrupt signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
+
+	logger.Info("Shutting down SAP mock server...")
+
+	// Shutdown HTTP server
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.WithError(err).Error("HTTP server forced to shutdown")
+	}
+
+	// Close Kafka consumer
+	if err := consumer.Close(); err != nil {
+		logger.WithError(err).Error("Failed to close Kafka consumer")
+	}
+
+	// Cancel consumer context
+	cancel()
+
+	logger.Info("SAP mock server gracefully stopped")
 }
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {
@@ -145,4 +256,11 @@ func respondWithError(w http.ResponseWriter, code int, message string) {
 		Success: false,
 		Message: message,
 	})
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

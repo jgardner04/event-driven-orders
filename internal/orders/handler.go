@@ -50,46 +50,33 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		"customer_id":  order.CustomerID,
 		"total_amount": order.TotalAmount,
 		"items_count":  len(order.Items),
-	}).Info("Processing order request")
+	}).Info("Processing order request - Phase 3: Order Service only")
 
-	// Phase 2: Write to both new order service and SAP
-	// First, try to save to the new order service
-	var orderServiceResp *models.OrderResponse
-	var orderServiceErr error
-	if h.orderServiceClient != nil {
-		orderServiceResp, orderServiceErr = h.orderServiceClient.CreateOrder(&order)
-		if orderServiceErr != nil {
-			// Log the error but don't fail the request yet
-			h.logger.WithError(orderServiceErr).Error("Failed to create order in new order service")
-		} else {
-			h.logger.Info("Order successfully saved to new order service")
-		}
+	// Phase 3: Only write to the new order service
+	// SAP will receive orders via Kafka events
+	if h.orderServiceClient == nil {
+		h.logger.Error("Order service client not configured")
+		h.respondWithError(w, http.StatusInternalServerError, "Order service not available")
+		return
 	}
 
-	// Always send to SAP (for now)
-	sapResp, err := h.sapClient.CreateOrder(&order)
+	orderServiceResp, err := h.orderServiceClient.CreateOrder(&order)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to create order in SAP")
-		
-		// If both services failed, return error
-		if orderServiceResp == nil || !orderServiceResp.Success {
-			h.respondWithError(w, http.StatusInternalServerError, "Failed to process order")
-			return
-		}
-		
-		// If only SAP failed but order service succeeded, log warning but continue
-		h.logger.Warn("SAP call failed but order service succeeded - continuing with order service response")
-		h.respondWithJSON(w, http.StatusCreated, orderServiceResp)
+		h.logger.WithError(err).Error("Failed to create order in order service")
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to process order")
 		return
 	}
 
-	if !sapResp.Success {
-		h.respondWithError(w, http.StatusBadRequest, sapResp.Message)
+	if !orderServiceResp.Success {
+		h.logger.WithField("message", orderServiceResp.Message).Error("Order service returned error")
+		h.respondWithError(w, http.StatusBadRequest, orderServiceResp.Message)
 		return
 	}
 
-	// Return SAP response for backward compatibility
-	h.respondWithJSON(w, http.StatusCreated, sapResp)
+	h.logger.WithField("order_id", order.ID).Info("Order successfully processed by order service - event published to Kafka")
+
+	// Return order service response
+	h.respondWithJSON(w, http.StatusCreated, orderServiceResp)
 }
 
 func (h *Handler) CompareOrders(w http.ResponseWriter, r *http.Request) {
