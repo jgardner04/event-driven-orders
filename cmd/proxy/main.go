@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/jogardn/strangler-demo/internal/circuitbreaker"
 	"github.com/jogardn/strangler-demo/internal/orders"
 	"github.com/jogardn/strangler-demo/internal/sap"
 	"github.com/jogardn/strangler-demo/internal/websocket"
@@ -25,11 +27,18 @@ func main() {
 	sapURL := getEnv("SAP_URL", "http://localhost:8082")
 	orderServiceURL := getEnv("ORDER_SERVICE_URL", "")
 
-	sapClient := sap.NewClient(sapURL, logger)
+	// Create circuit breaker manager
+	cbManager := circuitbreaker.NewManager(logger)
+	
+	// Configure circuit breaker settings for SAP
+	sapCBConfig := getSAPCircuitBreakerConfig()
+	sapClient := sapClientWithCircuitBreaker(sapURL, logger, cbManager, sapCBConfig)
 	
 	var orderServiceClient *orders.OrderServiceClient
 	if orderServiceURL != "" {
-		orderServiceClient = orders.NewOrderServiceClient(orderServiceURL, logger)
+		// Configure circuit breaker settings for Order Service
+		orderServiceCBConfig := getOrderServiceCircuitBreakerConfig()
+		orderServiceClient = orderServiceClientWithCircuitBreaker(orderServiceURL, logger, cbManager, orderServiceCBConfig)
 		logger.WithField("url", orderServiceURL).Info("Order service client configured")
 	} else {
 		logger.Info("Order service URL not configured - running in Phase 1 mode")
@@ -49,6 +58,9 @@ func main() {
 	router.HandleFunc("/orders", orderHandler.GetOrders).Methods("GET", "OPTIONS")
 	router.HandleFunc("/compare/orders", orderHandler.CompareOrders).Methods("GET", "OPTIONS")
 	router.HandleFunc("/compare/orders/{id}", orderHandler.CompareOrder).Methods("GET", "OPTIONS")
+	router.HandleFunc("/metrics/circuit-breakers", circuitBreakerMetrics(cbManager)).Methods("GET", "OPTIONS")
+	router.HandleFunc("/circuit-breakers/reset", resetCircuitBreakers(cbManager, logger)).Methods("POST", "OPTIONS")
+	router.HandleFunc("/circuit-breakers/reset/{name}", resetCircuitBreaker(cbManager, logger)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/ws", wsHub.HandleWebSocket)
 
 	router.Use(corsMiddleware())
@@ -201,4 +213,91 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(healthStatus)
 	}
+}
+
+func circuitBreakerMetrics(cbManager *circuitbreaker.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		metrics := cbManager.GetAllMetrics()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"circuit_breakers": metrics,
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+}
+
+func resetCircuitBreakers(cbManager *circuitbreaker.Manager, logger *logrus.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cbManager.ResetAll()
+		logger.Info("All circuit breakers reset via API")
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "All circuit breakers reset",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+}
+
+func resetCircuitBreaker(cbManager *circuitbreaker.Manager, logger *logrus.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		name := vars["name"]
+		
+		if name == "" {
+			http.Error(w, "Circuit breaker name is required", http.StatusBadRequest)
+			return
+		}
+		
+		success := cbManager.Reset(name)
+		if !success {
+			http.Error(w, "Circuit breaker not found", http.StatusNotFound)
+			return
+		}
+		
+		logger.WithField("circuit_breaker", name).Info("Circuit breaker reset via API")
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Circuit breaker reset",
+			"name": name,
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	}
+}
+
+func getSAPCircuitBreakerConfig() circuitbreaker.Config {
+	maxFailures, _ := strconv.Atoi(getEnv("SAP_CB_MAX_FAILURES", "3"))
+	timeout, _ := strconv.Atoi(getEnv("SAP_CB_TIMEOUT_SECONDS", "10"))
+	maxRequests, _ := strconv.Atoi(getEnv("SAP_CB_MAX_REQUESTS", "2"))
+	
+	return circuitbreaker.Config{
+		MaxFailures: maxFailures,
+		Timeout:     time.Duration(timeout) * time.Second,
+		MaxRequests: maxRequests,
+	}
+}
+
+func getOrderServiceCircuitBreakerConfig() circuitbreaker.Config {
+	maxFailures, _ := strconv.Atoi(getEnv("ORDER_SERVICE_CB_MAX_FAILURES", "5"))
+	timeout, _ := strconv.Atoi(getEnv("ORDER_SERVICE_CB_TIMEOUT_SECONDS", "15"))
+	maxRequests, _ := strconv.Atoi(getEnv("ORDER_SERVICE_CB_MAX_REQUESTS", "3"))
+	
+	return circuitbreaker.Config{
+		MaxFailures: maxFailures,
+		Timeout:     time.Duration(timeout) * time.Second,
+		MaxRequests: maxRequests,
+	}
+}
+
+func sapClientWithCircuitBreaker(baseURL string, logger *logrus.Logger, cbManager *circuitbreaker.Manager, config circuitbreaker.Config) *sap.Client {
+	cbManager.GetOrCreate("sap", config)
+	return sap.NewClient(baseURL, logger, cbManager)
+}
+
+func orderServiceClientWithCircuitBreaker(baseURL string, logger *logrus.Logger, cbManager *circuitbreaker.Manager, config circuitbreaker.Config) *orders.OrderServiceClient {
+	cbManager.GetOrCreate("order-service", config)
+	return orders.NewOrderServiceClient(baseURL, logger, cbManager)
 }
