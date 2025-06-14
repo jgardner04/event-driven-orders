@@ -285,6 +285,97 @@ Checks the health status of the SAP mock service (internal use).
 }
 ```
 
+### Circuit Breaker Management
+
+#### Get Circuit Breaker Metrics
+
+Retrieves current state and metrics for all circuit breakers.
+
+**Endpoint**: `GET /metrics/circuit-breakers`
+
+**Response** (200 OK):
+```json
+{
+  "circuit_breakers": {
+    "sap": {
+      "name": "sap",
+      "state": "closed",
+      "failures": 0,
+      "requests": 0,
+      "total_requests": 45,
+      "total_failures": 2,
+      "total_successes": 43,
+      "state_changes": 1,
+      "max_failures": 3,
+      "timeout_seconds": 10,
+      "max_requests": 2,
+      "last_failure": "2025-06-14T10:15:30Z",
+      "last_state_change": "2025-06-14T10:16:00Z"
+    },
+    "order-service": {
+      "name": "order-service",
+      "state": "open",
+      "failures": 5,
+      "requests": 0,
+      "total_requests": 12,
+      "total_failures": 8,
+      "total_successes": 4,
+      "state_changes": 2,
+      "max_failures": 5,
+      "timeout_seconds": 15,
+      "max_requests": 3,
+      "last_failure": "2025-06-14T10:20:45Z",
+      "last_state_change": "2025-06-14T10:20:50Z"
+    }
+  },
+  "timestamp": "2025-06-14T10:25:00Z"
+}
+```
+
+**Circuit Breaker States**:
+- `closed`: Normal operation, requests pass through
+- `open`: Service failing, requests fail immediately
+- `half-open`: Testing recovery, limited requests allowed
+
+#### Reset All Circuit Breakers
+
+Resets all circuit breakers to the closed state.
+
+**Endpoint**: `POST /circuit-breakers/reset`
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "All circuit breakers reset",
+  "timestamp": "2025-06-14T10:25:00Z"
+}
+```
+
+#### Reset Specific Circuit Breaker
+
+Resets a specific circuit breaker to the closed state.
+
+**Endpoint**: `POST /circuit-breakers/reset/{name}`
+
+**Path Parameters**:
+- `name`: Circuit breaker name (`sap` or `order-service`)
+
+**Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Circuit breaker reset",
+  "name": "sap",
+  "timestamp": "2025-06-14T10:25:00Z"
+}
+```
+
+**Error Responses**:
+
+- **400 Bad Request**: Missing circuit breaker name
+- **404 Not Found**: Circuit breaker not found
+
 ### WebSocket Real-Time Updates
 
 Real-time WebSocket connection for receiving live updates about orders, metrics, and health status.
@@ -511,6 +602,22 @@ curl http://localhost:8081/health
 curl http://localhost:8082/health
 ```
 
+Check circuit breaker metrics:
+```bash
+curl http://localhost:8080/metrics/circuit-breakers | jq .
+```
+
+Reset all circuit breakers:
+```bash
+curl -X POST http://localhost:8080/circuit-breakers/reset | jq .
+```
+
+Reset specific circuit breaker:
+```bash
+curl -X POST http://localhost:8080/circuit-breakers/reset/sap | jq .
+curl -X POST http://localhost:8080/circuit-breakers/reset/order-service | jq .
+```
+
 ### Using the Test Scripts
 
 **Basic functionality test:**
@@ -527,6 +634,11 @@ curl http://localhost:8082/health
 **Performance testing:**
 ```bash
 ./scripts/performance-benchmark.sh
+```
+
+**Circuit breaker testing:**
+```bash
+./scripts/test-circuit-breaker.sh
 ```
 
 **Load testing:**
