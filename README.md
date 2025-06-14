@@ -26,17 +26,17 @@ This project demonstrates how to implement the strangler pattern by building a p
                                                     │
                                                     │ Publishes
                                                     ▼
-                    ┌─────────────────┐    ┌─────────────────┐
-                    │   PostgreSQL    │    │     Kafka       │
-                    │    Database     │    │ order.created   │
-                    └─────────────────┘    └────────┬────────┘
-                                                    │
-                                                    │ Consumes
-                                                    ▼
-                                          ┌─────────────────┐
-                                          │   SAP Mock      │
-                                          │  (Consumer)     │
-                                          └─────────────────┘
+                   ┌─────────────────┐    ┌─────────────────┐
+                   │   PostgreSQL    │    │     Kafka       │
+                   │    Database     │    │ order.created   │
+                   └─────────────────┘    └────────┬────────┘
+                                                   │
+                                                   │ Consumes
+                                                   ▼
+                                         ┌─────────────────┐
+                                         │   SAP Mock      │
+                                         │  (Consumer)     │
+                                         └─────────────────┘
 ```
 
 **Key Changes in Phase 3:**
@@ -134,7 +134,7 @@ The dashboard provides:
 ./scripts/load-test.sh
 ```
 
-### 3. Load Testing
+### 4. Load Testing
 
 ```bash
 # Light load test (development)
