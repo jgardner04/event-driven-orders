@@ -8,26 +8,69 @@ This project uses Docker and Docker Compose to orchestrate the services required
 
 ### 1. Proxy Service
 
-The main proxy service that intercepts and forwards requests to SAP.
+The main proxy service that forwards requests to the Order Service (Phase 3).
 
 **Build Configuration**:
 - **Context**: Project root directory
 - **Dockerfile**: `cmd/proxy/Dockerfile`
 - **Port**: 8080 (host) → 8080 (container)
-- **Dependencies**: sap-mock service
+- **Dependencies**: order-service
 
 **Environment Variables**:
 - `PROXY_PORT`: Port for the proxy service (default: 8080)
-- `SAP_URL`: URL of the SAP service (default: http://sap-mock:8082)
+- `ORDER_SERVICE_URL`: URL of the Order Service (default: http://order-service:8081)
 
 ### 2. SAP Mock Service
 
-Simulates the legacy SAP system with artificial delays.
+Simulates the legacy SAP system. In Phase 3, consumes orders from Kafka events.
 
 **Build Configuration**:
 - **Context**: Project root directory
 - **Dockerfile**: `cmd/sap-mock/Dockerfile`
 - **Port**: 8082 (host) → 8082 (container)
+- **Dependencies**: kafka
+
+**Environment Variables**:
+- `SAP_PORT`: Port for the SAP service (default: 8082)
+- `KAFKA_BROKERS`: Kafka broker addresses (default: kafka:29092)
+
+### 3. Order Service
+
+The new microservice that handles order processing and publishes events to Kafka.
+
+**Build Configuration**:
+- **Context**: Project root directory
+- **Dockerfile**: `cmd/order-service/Dockerfile`
+- **Port**: 8081 (host) → 8081 (container)
+- **Dependencies**: postgres, kafka
+
+**Environment Variables**:
+- `ORDER_SERVICE_PORT`: Service port (default: 8081)
+- `DB_HOST`: PostgreSQL host (default: postgres)
+- `DB_NAME`: Database name (default: orderservice)
+- `KAFKA_BROKERS`: Kafka broker addresses (default: kafka:29092)
+
+### 4. PostgreSQL Database
+
+Stores orders for the Order Service.
+
+**Configuration**:
+- **Image**: postgres:15-alpine
+- **Port**: 5432 (host) → 5432 (container)
+- **Database**: orderservice
+- **Init Script**: `scripts/db/init.sql`
+
+### 5. Kafka & Zookeeper
+
+Event streaming platform for asynchronous communication.
+
+**Kafka Configuration**:
+- **Port**: 9092 (host) → 9092 (container)
+- **Topic**: order.created (auto-created)
+
+**Kafka UI**:
+- **Port**: 8090 (host) → 8080 (container)
+- **URL**: http://localhost:8090
 
 ## Network Configuration
 
@@ -35,6 +78,35 @@ All services communicate through a custom bridge network named `strangler-net`. 
 - Service discovery by container name
 - Network isolation from other Docker containers
 - Inter-service communication without exposing all ports
+
+## Phase 3 Architecture
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│                 │     │                 │     │                 │
+│     Proxy       │────▶│  Order Service  │────▶│   PostgreSQL    │
+│   Port 8080     │     │   Port 8081     │     │   Port 5432     │
+│                 │     │                 │     │                 │
+└─────────────────┘     └────────┬────────┘     └─────────────────┘
+                                 │
+                                 │ Publishes
+                                 ▼
+                        ┌─────────────────┐
+                        │                 │
+                        │     Kafka       │
+                        │   Port 9092     │
+                        │                 │
+                        └────────┬────────┘
+                                 │
+                                 │ Consumes
+                                 ▼
+                        ┌─────────────────┐
+                        │                 │
+                        │   SAP Mock      │
+                        │   Port 8082     │
+                        │                 │
+                        └─────────────────┘
+```
 
 ## Quick Start Commands
 

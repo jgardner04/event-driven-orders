@@ -16,7 +16,7 @@ Currently no authentication is required. This is a demo application.
 
 #### Create Order
 
-Creates a new order through the proxy service, which forwards it to the SAP system.
+Creates a new order through the proxy service. In Phase 3, orders are sent to the Order Service only, and SAP receives them via Kafka events.
 
 **Endpoint**: `POST /orders`
 
@@ -268,6 +268,40 @@ Example log entry:
   "duration": 2156,
   "msg": "Request completed",
   "time": "2025-06-13T10:30:02Z"
+}
+```
+
+## Phase 3 Event-Driven Architecture
+
+In Phase 3, the architecture has evolved to complete event-driven decoupling:
+
+### Order Flow
+
+1. **Client → Proxy**: Order request sent to proxy
+2. **Proxy → Order Service**: Proxy forwards to Order Service only (no SAP call)
+3. **Order Service → PostgreSQL**: Order saved to database
+4. **Order Service → Kafka**: `order.created` event published
+5. **Kafka → SAP Mock**: SAP consumes event and processes order asynchronously
+
+### Key Changes from Phase 2
+
+- **No direct SAP calls**: Proxy no longer communicates directly with SAP
+- **Event consumption**: SAP Mock implements Kafka consumer
+- **Asynchronous processing**: Orders reach SAP via events, not HTTP
+- **Complete decoupling**: Systems are fully independent
+
+### Kafka Event Structure
+
+**Topic**: `order.created`
+
+**Event Payload**:
+```json
+{
+  "order_id": "550e8400-e29b-41d4-a716-446655440000",
+  "customer_id": "CUST-12345",
+  "total_amount": 259.90,
+  "created_at": "2025-06-13T10:30:00Z",
+  "event_time": "2025-06-13T10:30:02Z"
 }
 ```
 
