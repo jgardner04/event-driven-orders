@@ -43,6 +43,96 @@ type Config struct {
 	OnStateChange   func(name string, from State, to State)
 }
 
+// stateChangeEvent represents a state change callback event
+type stateChangeEvent struct {
+	name string
+	from State
+	to   State
+}
+
+// callbackWorkerPool manages a pool of workers for handling state change callbacks
+type callbackWorkerPool struct {
+	workers   int
+	eventChan chan stateChangeEvent
+	wg        sync.WaitGroup
+	stopChan  chan struct{}
+	cb        *CircuitBreaker
+}
+
+// newCallbackWorkerPool creates a new worker pool for handling callbacks
+func newCallbackWorkerPool(workers int, cb *CircuitBreaker) *callbackWorkerPool {
+	if workers <= 0 {
+		workers = 2 // Default to 2 workers
+	}
+	if workers > 10 {
+		workers = 10 // Cap at 10 workers to prevent resource exhaustion
+	}
+
+	pool := &callbackWorkerPool{
+		workers:   workers,
+		eventChan: make(chan stateChangeEvent, workers*2), // Buffered channel
+		stopChan:  make(chan struct{}),
+		cb:        cb,
+	}
+
+	// Start worker goroutines
+	for i := 0; i < workers; i++ {
+		pool.wg.Add(1)
+		go pool.worker()
+	}
+
+	return pool
+}
+
+// worker processes state change events
+func (pool *callbackWorkerPool) worker() {
+	defer pool.wg.Done()
+
+	for {
+		select {
+		case event := <-pool.eventChan:
+			pool.cb.executeStateChangeCallback(event.name, event.from, event.to)
+		case <-pool.stopChan:
+			return
+		}
+	}
+}
+
+// submit submits a state change event to the worker pool
+func (pool *callbackWorkerPool) submit(event stateChangeEvent) {
+	select {
+	case pool.eventChan <- event:
+		// Event submitted successfully
+	default:
+		// Channel is full, log warning and drop event to prevent blocking
+		pool.cb.logger.WithFields(logrus.Fields{
+			"circuit_breaker": event.name,
+			"from_state": event.from.String(),
+			"to_state": event.to.String(),
+		}).Warn("State change callback queue full, dropping event")
+	}
+}
+
+// shutdown gracefully shuts down the worker pool
+func (pool *callbackWorkerPool) shutdown(timeout time.Duration) {
+	close(pool.stopChan)
+
+	// Wait for workers to finish with timeout
+	done := make(chan struct{})
+	go func() {
+		pool.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// All workers finished
+	case <-time.After(timeout):
+		// Timeout reached, workers may still be running
+		pool.cb.logger.Warn("Worker pool shutdown timeout reached")
+	}
+}
+
 type CircuitBreaker struct {
 	name         string
 	maxFailures  int
@@ -64,6 +154,9 @@ type CircuitBreaker struct {
 	lastStateChange time.Time
 
 	logger *logrus.Logger
+
+	// Worker pool for handling state change callbacks
+	callbackPool *callbackWorkerPool
 }
 
 func New(config Config, logger *logrus.Logger) *CircuitBreaker {
@@ -128,7 +221,7 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		config.MaxRequests = 100
 	}
 
-	return &CircuitBreaker{
+	cb := &CircuitBreaker{
 		name:         config.Name,
 		maxFailures:  config.MaxFailures,
 		timeout:      config.Timeout,
@@ -137,6 +230,13 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		state:        StateClosed,
 		logger:       logger,
 	}
+
+	// Initialize callback worker pool if state change callback is provided
+	if config.OnStateChange != nil {
+		cb.callbackPool = newCallbackWorkerPool(2, cb) // Use 2 workers by default
+	}
+
+	return cb
 }
 
 func (cb *CircuitBreaker) Execute(fn func() error) error {
@@ -237,8 +337,13 @@ func (cb *CircuitBreaker) setState(newState State) {
 		"to_state": newState.String(),
 	}).Info("Circuit breaker state changed")
 
-	if cb.onStateChange != nil {
-		go cb.executeStateChangeCallback(cb.name, oldState, newState)
+	if cb.onStateChange != nil && cb.callbackPool != nil {
+		// Submit to worker pool instead of launching unbounded goroutines
+		cb.callbackPool.submit(stateChangeEvent{
+			name: cb.name,
+			from: oldState,
+			to:   newState,
+		})
 	}
 }
 
@@ -319,4 +424,11 @@ func (cb *CircuitBreaker) Reset() {
 func (cb *CircuitBreaker) String() string {
 	return fmt.Sprintf("CircuitBreaker(name=%s, state=%s, failures=%d/%d)",
 		cb.name, cb.state.String(), cb.failures, cb.maxFailures)
+}
+
+// Shutdown gracefully shuts down the circuit breaker and its worker pool
+func (cb *CircuitBreaker) Shutdown() {
+	if cb.callbackPool != nil {
+		cb.callbackPool.shutdown(5 * time.Second)
+	}
 }
