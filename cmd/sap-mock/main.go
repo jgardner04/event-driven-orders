@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,8 +31,29 @@ func NewSAPOrderStore() *SAPOrderStore {
 	}
 }
 
-// Implement OrderEventHandler interface
+// Configuration for failure simulation
+type SAPConfig struct {
+	FailureRate    float64 // Percentage of requests to fail (0.0 to 1.0)
+	SimulateOutage bool    // Simulate complete outage
+}
+
+var sapConfig = &SAPConfig{
+	FailureRate:    0.0, // Default: no failures
+	SimulateOutage: false,
+}
+
+// Implement RetryableOrderEventHandler interface
 func (s *SAPOrderStore) HandleOrderCreated(event events.OrderCreatedEvent) error {
+	// Check if we should simulate an outage
+	if sapConfig.SimulateOutage {
+		return fmt.Errorf("SAP system unavailable - simulated outage")
+	}
+
+	// Simulate random failures based on failure rate
+	if sapConfig.FailureRate > 0 && rand.Float64() < sapConfig.FailureRate {
+		return fmt.Errorf("SAP processing failed - simulated random failure")
+	}
+
 	// Simulate SAP processing delay
 	delay := time.Duration(rand.Intn(2000)+1000) * time.Millisecond
 	
@@ -42,6 +64,11 @@ func (s *SAPOrderStore) HandleOrderCreated(event events.OrderCreatedEvent) error
 	}).Info("SAP processing order from Kafka event")
 	
 	time.Sleep(delay)
+
+	// Simulate occasional processing errors
+	if rand.Float64() < 0.05 { // 5% chance of processing error
+		return fmt.Errorf("SAP internal processing error for order %s", event.OrderID)
+	}
 
 	// Create order from event data
 	order := &models.Order{
@@ -68,6 +95,27 @@ func (s *SAPOrderStore) HandleOrderCreated(event events.OrderCreatedEvent) error
 	return nil
 }
 
+// IsRetryable determines if an error should trigger a retry
+func (s *SAPOrderStore) IsRetryable(err error) bool {
+	// System unavailable errors are retryable
+	if strings.Contains(err.Error(), "unavailable") {
+		return true
+	}
+	
+	// Temporary processing errors are retryable
+	if strings.Contains(err.Error(), "processing error") {
+		return true
+	}
+	
+	// Random failures are retryable
+	if strings.Contains(err.Error(), "random failure") {
+		return true
+	}
+	
+	// Other errors (e.g., data validation) are not retryable
+	return false
+}
+
 func main() {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
@@ -75,18 +123,18 @@ func main() {
 	// Create order store
 	store := NewSAPOrderStore()
 
-	// Start Kafka consumer with retry
+	// Start Kafka consumer with retry logic
 	kafkaBrokers := getEnv("KAFKA_BROKERS", "localhost:9092")
-	logger.WithField("brokers", kafkaBrokers).Info("Initializing Kafka consumer...")
+	logger.WithField("brokers", kafkaBrokers).Info("Initializing Kafka consumer with retry support...")
 	
-	var consumer *events.KafkaConsumer
+	var consumer *events.KafkaConsumerWithRetry
 	var err error
 	
 	// Retry connecting to Kafka
 	for i := 0; i < 10; i++ {
-		consumer, err = events.NewKafkaConsumer(kafkaBrokers, "sap-consumer-group", store, logger)
+		consumer, err = events.NewKafkaConsumerWithRetry(kafkaBrokers, "sap-consumer-group", store, logger)
 		if err == nil {
-			logger.Info("Successfully connected to Kafka")
+			logger.Info("Successfully connected to Kafka with retry support")
 			break
 		}
 		
@@ -115,6 +163,11 @@ func main() {
 	router.HandleFunc("/orders", createOrder(logger, store)).Methods("POST") // Legacy endpoint
 	router.HandleFunc("/orders", listOrders(logger, store)).Methods("GET")
 	router.HandleFunc("/orders/{id}", getOrder(logger, store)).Methods("GET")
+	
+	// Failure simulation endpoints
+	router.HandleFunc("/admin/failure-rate", setFailureRate(logger)).Methods("POST")
+	router.HandleFunc("/admin/simulate-outage", simulateOutage(logger)).Methods("POST")
+	router.HandleFunc("/admin/metrics", getMetrics(logger, consumer)).Methods("GET")
 
 	// Start HTTP server
 	port := getEnv("SAP_PORT", "8082")
@@ -263,4 +316,80 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// Admin endpoints for failure simulation
+func setFailureRate(logger *logrus.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			FailureRate float64 `json:"failure_rate"`
+		}
+		
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondWithError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		
+		if req.FailureRate < 0 || req.FailureRate > 1 {
+			respondWithError(w, http.StatusBadRequest, "Failure rate must be between 0.0 and 1.0")
+			return
+		}
+		
+		sapConfig.FailureRate = req.FailureRate
+		
+		logger.WithField("failure_rate", req.FailureRate).Info("Updated SAP failure rate")
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":      true,
+			"failure_rate": sapConfig.FailureRate,
+			"message":      fmt.Sprintf("Failure rate set to %.2f%%", sapConfig.FailureRate*100),
+		})
+	}
+}
+
+func simulateOutage(logger *logrus.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Outage bool `json:"outage"`
+		}
+		
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondWithError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		
+		sapConfig.SimulateOutage = req.Outage
+		
+		logger.WithField("simulate_outage", req.Outage).Info("Updated SAP outage simulation")
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":        true,
+			"simulate_outage": sapConfig.SimulateOutage,
+			"message":        fmt.Sprintf("Outage simulation %s", map[bool]string{true: "enabled", false: "disabled"}[req.Outage]),
+		})
+	}
+}
+
+func getMetrics(logger *logrus.Logger, consumer *events.KafkaConsumerWithRetry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		metrics := consumer.GetMetrics()
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"consumer_metrics": map[string]interface{}{
+				"processed_count": metrics.ProcessedCount,
+				"success_count":   metrics.SuccessCount,
+				"failure_count":   metrics.FailureCount,
+				"retry_count":     metrics.RetryCount,
+				"dlq_count":       metrics.DLQCount,
+			},
+			"failure_config": map[string]interface{}{
+				"failure_rate":    sapConfig.FailureRate,
+				"simulate_outage": sapConfig.SimulateOutage,
+			},
+			"timestamp": time.Now(),
+		})
+	}
 }
