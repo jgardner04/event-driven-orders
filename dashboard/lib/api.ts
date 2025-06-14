@@ -91,7 +91,7 @@ export class ApiClient {
   }
 
   // Orders
-  static async getOrders(source: 'proxy' | 'order_service' | 'sap_mock' = 'order_service'): Promise<Order[]> {
+  static async getOrders(source: 'proxy' | 'order_service' | 'sap_mock' = 'proxy'): Promise<Order[]> {
     const urls = {
       proxy: `${PROXY_URL}/orders`,
       order_service: `${ORDER_SERVICE_URL}/orders`,
@@ -99,13 +99,15 @@ export class ApiClient {
     };
 
     try {
+      console.log(`Fetching orders from ${source} at ${urls[source]}`);
       const response = await api.get(urls[source]);
+      console.log(`Orders response from ${source}:`, response.data);
       
-      if (source === 'order_service') {
-        return response.data.orders || [];
-      } else {
-        return response.data.orders || response.data || [];
-      }
+      // All services now return orders in the same format
+      const orders = response.data.orders || [];
+      console.log(`Extracted ${orders.length} orders from ${source}`);
+      
+      return orders;
     } catch (error) {
       console.error(`Failed to fetch orders from ${source}:`, error);
       return [];

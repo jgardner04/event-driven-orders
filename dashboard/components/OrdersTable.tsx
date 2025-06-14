@@ -20,6 +20,8 @@ export function OrdersTable({
   showActions = true,
   realTime = false
 }: OrdersTableProps) {
+  console.log(`OrdersTable rendering with ${orders.length} orders for "${title}"`);
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<keyof Order>('created_at');

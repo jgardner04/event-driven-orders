@@ -87,6 +87,16 @@ export default function Dashboard() {
 
     // Initial data fetch
     fetchInitialData();
+    
+    // Also fetch orders separately to debug
+    ApiClient.getOrders().then(orders => {
+      console.log('Direct orders fetch succeeded:', orders.length);
+      if (orders.length > 0) {
+        setState(prev => ({ ...prev, orders }));
+      }
+    }).catch(error => {
+      console.error('Direct orders fetch failed:', error);
+    });
 
     // Set up auto-refresh
     const refreshInterval = setInterval(() => {
@@ -107,6 +117,7 @@ export default function Dashboard() {
 
   const fetchInitialData = async () => {
     setIsLoading(true);
+    console.log('Starting to fetch initial data...');
     try {
       const [orders, health, metrics, comparison] = await Promise.allSettled([
         ApiClient.getOrders(),
@@ -114,6 +125,17 @@ export default function Dashboard() {
         ApiClient.getSystemMetrics(),
         ApiClient.compareData().catch(() => null), // Don't fail if comparison fails
       ]);
+
+      console.log('Fetch results:', {
+        orders: orders.status === 'fulfilled' ? `${orders.value.length} orders` : 'failed',
+        health: health.status,
+        metrics: metrics.status,
+        comparison: comparison.status
+      });
+
+      if (orders.status === 'rejected') {
+        console.error('Failed to fetch orders:', orders.reason);
+      }
 
       setState(prev => ({
         ...prev,
@@ -137,13 +159,17 @@ export default function Dashboard() {
 
   const refreshData = useCallback(async () => {
     try {
-      const [health, metrics] = await Promise.allSettled([
+      const [orders, health, metrics] = await Promise.allSettled([
+        ApiClient.getOrders(),
         ApiClient.checkAllServicesHealth(),
         ApiClient.getSystemMetrics(),
       ]);
 
+      console.log('Refresh data - orders fetched:', orders.status === 'fulfilled' ? orders.value.length : 'failed');
+
       setState(prev => ({
         ...prev,
+        orders: orders.status === 'fulfilled' ? orders.value : prev.orders,
         serviceHealth: health.status === 'fulfilled' ? health.value : prev.serviceHealth,
         systemMetrics: metrics.status === 'fulfilled' ? metrics.value : prev.systemMetrics,
         lastUpdate: new Date().toISOString(),
@@ -151,6 +177,10 @@ export default function Dashboard() {
 
       if (metrics.status === 'fulfilled' && metrics.value) {
         setMetricsHistory(prev => [...prev.slice(-59), metrics.value!]);
+      }
+      
+      if (orders.status === 'fulfilled') {
+        toast.success(`Refreshed: ${orders.value.length} orders loaded`);
       }
     } catch (error) {
       console.error('Failed to refresh data:', error);

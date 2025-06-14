@@ -46,6 +46,7 @@ func main() {
 	router.HandleFunc("/health", orderHandler.HealthCheck).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/health/all", allServicesHealthCheck(sapClient, orderServiceClient, logger)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/orders", orderHandler.CreateOrder).Methods("POST", "OPTIONS")
+	router.HandleFunc("/orders", orderHandler.GetOrders).Methods("GET", "OPTIONS")
 	router.HandleFunc("/compare/orders", orderHandler.CompareOrders).Methods("GET", "OPTIONS")
 	router.HandleFunc("/compare/orders/{id}", orderHandler.CompareOrder).Methods("GET", "OPTIONS")
 	router.HandleFunc("/ws", wsHub.HandleWebSocket)

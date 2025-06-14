@@ -196,6 +196,37 @@ func (h *Handler) CompareOrder(w http.ResponseWriter, r *http.Request) {
 	h.respondWithJSON(w, http.StatusOK, comparison)
 }
 
+func (h *Handler) GetOrders(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("Fetching orders from order service")
+	
+	if h.orderServiceClient == nil {
+		h.logger.Error("Order service client not configured")
+		h.respondWithError(w, http.StatusInternalServerError, "Order service not available")
+		return
+	}
+	
+	orders, err := h.orderServiceClient.GetOrders()
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to fetch orders from order service")
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to fetch orders")
+		return
+	}
+	
+	h.logger.WithField("count", len(orders)).Info("Successfully fetched orders")
+	
+	// Add cache control headers to prevent caching
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	
+	h.respondWithJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"orders": orders,
+		"count": len(orders),
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+}
+
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	h.respondWithJSON(w, http.StatusOK, map[string]string{
 		"status": "healthy",
