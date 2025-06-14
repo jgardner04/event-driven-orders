@@ -168,9 +168,11 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 		return ErrCircuitBreakerOpen
 	}
 
-	// Only increment totalRequests for requests that will be attempted
+	// Only increment counters for requests that will actually be attempted
 	cb.totalRequests++
-	cb.requests++
+	if cb.state == StateHalfOpen {
+		cb.requests++
+	}
 	cb.mutex.Unlock()
 
 	// Execute function concurrently and wait for result via channel

@@ -29,11 +29,11 @@ func main() {
 
 	// Create circuit breaker manager
 	cbManager := circuitbreaker.NewManager(logger)
-	
+
 	// Configure circuit breaker settings for SAP
 	sapCBConfig := getSAPCircuitBreakerConfig(logger)
 	sapClient := sapClientWithCircuitBreaker(sapURL, logger, cbManager, sapCBConfig)
-	
+
 	var orderServiceClient *orders.OrderServiceClient
 	if orderServiceURL != "" {
 		// Configure circuit breaker settings for Order Service
@@ -43,7 +43,7 @@ func main() {
 	} else {
 		logger.Info("Order service URL not configured - running in Phase 1 mode")
 	}
-	
+
 	// Create WebSocket hub
 	wsHub := websocket.NewHub(logger)
 	go wsHub.Run()
@@ -100,7 +100,7 @@ func loggingMiddleware(logger *logrus.Logger) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			
+
 			logger.WithFields(logrus.Fields{
 				"method": r.Method,
 				"path":   r.URL.Path,
@@ -132,13 +132,13 @@ func corsMiddleware() mux.MiddlewareFunc {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			
+
 			// Handle preflight requests
 			if r.Method == "OPTIONS" {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
-			
+
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -147,7 +147,7 @@ func corsMiddleware() mux.MiddlewareFunc {
 func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.OrderServiceClient, cbManager *circuitbreaker.Manager, logger *logrus.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		healthStatus := make(map[string]interface{})
-		
+
 		// Check proxy health (always healthy if running)
 		healthStatus["proxy"] = map[string]interface{}{
 			"status": "healthy",
@@ -155,23 +155,23 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 			"response_time": 0,
 			"last_check": time.Now().Format(time.RFC3339),
 		}
-		
+
 		// Check order service health
 		if orderServiceClient != nil {
 			start := time.Now()
 			orderServiceCB := cbManager.Get("order-service")
-			
+
 			// Try to get orders to check if service is healthy
 			_, err := orderServiceClient.GetOrders()
 			responseTime := time.Since(start).Milliseconds()
-			
+
 			cbState := "unknown"
 			cbMetrics := map[string]interface{}{}
 			if orderServiceCB != nil {
 				cbState = orderServiceCB.State().String()
 				cbMetrics = orderServiceCB.Metrics()
 			}
-			
+
 			if err == nil {
 				healthStatus["order_service"] = map[string]interface{}{
 					"status": "healthy",
@@ -208,20 +208,20 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 				},
 			}
 		}
-		
+
 		// Check SAP health
 		start := time.Now()
 		sapCB := cbManager.Get("sap")
 		_, err := sapClient.GetOrders()
 		responseTime := time.Since(start).Milliseconds()
-		
+
 		cbState := "unknown"
 		cbMetrics := map[string]interface{}{}
 		if sapCB != nil {
 			cbState = sapCB.State().String()
 			cbMetrics = sapCB.Metrics()
 		}
-		
+
 		if err == nil {
 			healthStatus["sap_mock"] = map[string]interface{}{
 				"status": "healthy",
@@ -246,7 +246,7 @@ func allServicesHealthCheck(sapClient *sap.Client, orderServiceClient *orders.Or
 				},
 			}
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(healthStatus)
 	}
@@ -267,7 +267,7 @@ func resetCircuitBreakers(cbManager *circuitbreaker.Manager, logger *logrus.Logg
 	return func(w http.ResponseWriter, r *http.Request) {
 		cbManager.ResetAll()
 		logger.Info("All circuit breakers reset via API")
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -281,20 +281,20 @@ func resetCircuitBreaker(cbManager *circuitbreaker.Manager, logger *logrus.Logge
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		name := vars["name"]
-		
+
 		if name == "" {
 			http.Error(w, "Circuit breaker name is required", http.StatusBadRequest)
 			return
 		}
-		
+
 		success := cbManager.Reset(name)
 		if !success {
 			http.Error(w, "Circuit breaker not found", http.StatusNotFound)
 			return
 		}
-		
+
 		logger.WithField("circuit_breaker", name).Info("Circuit breaker reset via API")
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -315,7 +315,7 @@ func parseIntWithDefault(envVar, defaultValue string, logger *logrus.Logger) int
 			"default": defaultValue,
 			"error": err.Error(),
 		}).Warn("Failed to parse environment variable as integer, using default")
-		
+
 		// Parse the default value - this should always work
 		defaultParsed, defaultErr := strconv.Atoi(defaultValue)
 		if defaultErr != nil {
@@ -333,9 +333,20 @@ func parseIntWithDefault(envVar, defaultValue string, logger *logrus.Logger) int
 
 func getSAPCircuitBreakerConfig(logger *logrus.Logger) circuitbreaker.Config {
 	maxFailures := parseIntWithDefault("SAP_CB_MAX_FAILURES", "3", logger)
+	if maxFailures < 1 {
+		logger.Warn("SAP_CB_MAX_FAILURES must be > 0; using 1")
+		maxFailures = 1
+	}
 	timeout := parseIntWithDefault("SAP_CB_TIMEOUT_SECONDS", "10", logger)
+	if timeout < 1 {
+		logger.Warn("SAP_CB_TIMEOUT_SECONDS must be > 0; using 1")
+		timeout = 1
+	}
 	maxRequests := parseIntWithDefault("SAP_CB_MAX_REQUESTS", "2", logger)
-	
+	if maxRequests < 1 {
+		logger.Warn("SAP_CB_MAX_REQUESTS must be > 0; using 1")
+		maxRequests = 1
+	}
 	return circuitbreaker.Config{
 		MaxFailures: maxFailures,
 		Timeout:     time.Duration(timeout) * time.Second,
@@ -345,9 +356,20 @@ func getSAPCircuitBreakerConfig(logger *logrus.Logger) circuitbreaker.Config {
 
 func getOrderServiceCircuitBreakerConfig(logger *logrus.Logger) circuitbreaker.Config {
 	maxFailures := parseIntWithDefault("ORDER_SERVICE_CB_MAX_FAILURES", "5", logger)
+	if maxFailures < 1 {
+		logger.Warn("ORDER_SERVICE_CB_MAX_FAILURES must be > 0; using 1")
+		maxFailures = 1
+	}
 	timeout := parseIntWithDefault("ORDER_SERVICE_CB_TIMEOUT_SECONDS", "15", logger)
+	if timeout < 1 {
+		logger.Warn("ORDER_SERVICE_CB_TIMEOUT_SECONDS must be > 0; using 1")
+		timeout = 1
+	}
 	maxRequests := parseIntWithDefault("ORDER_SERVICE_CB_MAX_REQUESTS", "3", logger)
-	
+	if maxRequests < 1 {
+		logger.Warn("ORDER_SERVICE_CB_MAX_REQUESTS must be > 0; using 1")
+		maxRequests = 1
+	}
 	return circuitbreaker.Config{
 		MaxFailures: maxFailures,
 		Timeout:     time.Duration(timeout) * time.Second,
