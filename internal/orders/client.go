@@ -66,6 +66,45 @@ func (c *OrderServiceClient) CreateOrder(order *models.Order) (*models.OrderResp
 	return &orderResp, nil
 }
 
+func (c *OrderServiceClient) CreateOrderHistorical(order *models.Order) (*models.OrderResponse, error) {
+	c.logger.WithField("order_id", order.ID).Info("Sending historical order to order service")
+	
+	jsonData, err := json.Marshal(order)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal historical order: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+"/orders/historical", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create historical order request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send historical order request to order service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var orderResp models.OrderResponse
+	if err := json.NewDecoder(resp.Body).Decode(&orderResp); err != nil {
+		return nil, fmt.Errorf("failed to decode historical order service response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("order service returned error status for historical order: %d", resp.StatusCode)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"order_id": order.ID,
+		"status":   resp.StatusCode,
+		"success":  orderResp.Success,
+	}).Info("Historical order created in order service")
+
+	return &orderResp, nil
+}
+
 func (c *OrderServiceClient) GetOrders() ([]models.Order, error) {
 	c.logger.Info("Fetching orders from order service")
 	

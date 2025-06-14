@@ -85,6 +85,7 @@ func main() {
 	router := mux.NewRouter()
 	router.HandleFunc("/health", service.HealthCheck).Methods("GET")
 	router.HandleFunc("/orders", service.CreateOrder).Methods("POST")
+	router.HandleFunc("/orders/historical", service.CreateOrderHistorical).Methods("POST")
 	router.HandleFunc("/orders", service.ListOrders).Methods("GET")
 	router.HandleFunc("/orders/{id}", service.GetOrder).Methods("GET")
 
@@ -162,6 +163,37 @@ func (s *OrderService) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	response := models.OrderResponse{
 		Success: true,
 		Message: "Order created successfully",
+		Order:   &order,
+	}
+
+	s.respondWithJSON(w, http.StatusCreated, response)
+}
+
+func (s *OrderService) CreateOrderHistorical(w http.ResponseWriter, r *http.Request) {
+	var order models.Order
+	if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
+		s.logger.WithError(err).Error("Failed to decode historical order request")
+		s.respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Save to database (no event publishing for historical orders)
+	if err := s.saveOrder(&order); err != nil {
+		s.logger.WithError(err).Error("Failed to save historical order")
+		s.respondWithError(w, http.StatusInternalServerError, "Failed to save historical order")
+		return
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"order_id":     order.ID,
+		"customer_id":  order.CustomerID,
+		"total_amount": order.TotalAmount,
+	}).Info("Historical order created successfully (no events published)")
+
+	// Return response
+	response := models.OrderResponse{
+		Success: true,
+		Message: "Historical order created successfully",
 		Order:   &order,
 	}
 

@@ -110,6 +110,42 @@ services:
     networks:
       - strangler-net
 
+  # Data Tools (for data comparison and migration)
+  data-tools:
+    build:
+      context: .
+      dockerfile: cmd/data-tools/Dockerfile
+    environment:
+      - ORDER_SERVICE_URL=http://order-service:8081
+      - SAP_URL=http://sap-mock:8082
+    depends_on:
+      - order-service
+      - sap-mock
+    networks:
+      - strangler-net
+    profiles:
+      - tools
+
+  # Dashboard (Next.js monitoring interface)
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws
+      - NEXT_PUBLIC_PROXY_URL=http://localhost:8080
+      - NEXT_PUBLIC_ORDER_SERVICE_URL=http://localhost:8081
+      - NEXT_PUBLIC_SAP_URL=http://localhost:8082
+      - NODE_ENV=production
+    depends_on:
+      - proxy
+      - order-service
+      - sap-mock
+    networks:
+      - strangler-net
+
   # Kafka UI (optional but helpful for debugging)
   kafka-ui:
     image: provectuslabs/kafka-ui:latest

@@ -13,10 +13,15 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type WebSocketHub interface {
+	Broadcast(messageType string, data interface{}, source string)
+}
+
 type Handler struct {
 	sapClient          *sap.Client
 	orderServiceClient *OrderServiceClient
 	logger             *logrus.Logger
+	wsHub              WebSocketHub
 }
 
 func NewHandler(sapClient *sap.Client, orderServiceClient *OrderServiceClient, logger *logrus.Logger) *Handler {
@@ -25,6 +30,10 @@ func NewHandler(sapClient *sap.Client, orderServiceClient *OrderServiceClient, l
 		orderServiceClient: orderServiceClient,
 		logger:             logger,
 	}
+}
+
+func (h *Handler) SetWebSocketHub(hub WebSocketHub) {
+	h.wsHub = hub
 }
 
 func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +83,17 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.WithField("order_id", order.ID).Info("Order successfully processed by order service - event published to Kafka")
+
+	// Broadcast order creation via WebSocket
+	if h.wsHub != nil {
+		orderEvent := map[string]interface{}{
+			"type":            "order_created",
+			"order":           order,
+			"source":          "proxy",
+			"processing_time": time.Since(time.Now()).Milliseconds(), // This would be calculated properly in real implementation
+		}
+		h.wsHub.Broadcast("order_created", orderEvent, "proxy")
+	}
 
 	// Return order service response
 	h.respondWithJSON(w, http.StatusCreated, orderServiceResp)

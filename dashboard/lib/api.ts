@@ -47,29 +47,47 @@ export class ApiClient {
   }
 
   static async checkAllServicesHealth(): Promise<Record<string, ServiceHealth>> {
-    const services = ['proxy', 'order_service', 'sap_mock'] as const;
-    
-    const healthChecks = await Promise.allSettled(
-      services.map(service => this.checkServiceHealth(service))
-    );
-
-    const results: Record<string, ServiceHealth> = {};
-    
-    healthChecks.forEach((result, index) => {
-      const service = services[index];
-      if (result.status === 'fulfilled') {
-        results[service] = result.value;
-      } else {
-        results[service] = {
-          status: 'unhealthy',
-          service,
-          error: 'Health check failed',
-          last_check: new Date().toISOString(),
-        };
+    try {
+      // Use the consolidated health endpoint from the proxy
+      const response = await api.get(`${PROXY_URL}/api/health/all`);
+      const healthData = response.data;
+      
+      // Transform the response to match our ServiceHealth interface
+      const results: Record<string, ServiceHealth> = {};
+      
+      for (const [service, data] of Object.entries(healthData)) {
+        results[service] = data as ServiceHealth;
       }
-    });
+      
+      return results;
+    } catch (error) {
+      // If the consolidated endpoint fails, fall back to individual checks
+      console.error('Failed to fetch consolidated health status:', error);
+      
+      const services = ['proxy', 'order_service', 'sap_mock'] as const;
+      
+      const healthChecks = await Promise.allSettled(
+        services.map(service => this.checkServiceHealth(service))
+      );
 
-    return results;
+      const results: Record<string, ServiceHealth> = {};
+      
+      healthChecks.forEach((result, index) => {
+        const service = services[index];
+        if (result.status === 'fulfilled') {
+          results[service] = result.value;
+        } else {
+          results[service] = {
+            status: 'unhealthy',
+            service,
+            error: 'Health check failed',
+            last_check: new Date().toISOString(),
+          };
+        }
+      });
+
+      return results;
+    }
   }
 
   // Orders
