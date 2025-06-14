@@ -160,10 +160,25 @@ type CircuitBreaker struct {
 }
 
 func New(config Config, logger *logrus.Logger) *CircuitBreaker {
+	// Validate logger first as it's critical for all subsequent logging
+	if logger == nil {
+		panic("logger cannot be nil - circuit breaker requires a valid logger instance")
+	}
+
 	// Validate and sanitize configuration values
 	if config.Name == "" {
 		config.Name = "unnamed"
 		logger.Warn("Circuit breaker created without name, using 'unnamed'")
+	}
+
+	// Validate name doesn't contain problematic characters
+	if len(config.Name) > 100 {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"length": len(config.Name),
+			"max_allowed": 100,
+		}).Warn("Circuit breaker name too long, truncating")
+		config.Name = config.Name[:100]
 	}
 
 	if config.MaxFailures <= 0 {
@@ -182,6 +197,16 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 			"default_value": "30s",
 		}).Warn("Invalid Timeout value, using default")
 		config.Timeout = 30 * time.Second
+	}
+
+	// Validate minimum timeout to prevent excessive CPU usage
+	if config.Timeout < 100*time.Millisecond {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"invalid_value": config.Timeout,
+			"minimum_value": "100ms",
+		}).Warn("Timeout too small, setting to minimum")
+		config.Timeout = 100 * time.Millisecond
 	}
 
 	if config.MaxRequests <= 0 {
@@ -220,6 +245,24 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 		}).Warn("MaxRequests too high, capping at maximum")
 		config.MaxRequests = 100
 	}
+
+	// Validate configuration coherence
+	if config.MaxRequests > config.MaxFailures {
+		logger.WithFields(logrus.Fields{
+			"circuit_breaker": config.Name,
+			"max_requests": config.MaxRequests,
+			"max_failures": config.MaxFailures,
+		}).Warn("MaxRequests is greater than MaxFailures, this may cause unexpected behavior")
+	}
+
+	// Log final configuration for debugging
+	logger.WithFields(logrus.Fields{
+		"circuit_breaker": config.Name,
+		"max_failures": config.MaxFailures,
+		"timeout": config.Timeout,
+		"max_requests": config.MaxRequests,
+		"has_state_change_callback": config.OnStateChange != nil,
+	}).Debug("Circuit breaker created with configuration")
 
 	cb := &CircuitBreaker{
 		name:         config.Name,
