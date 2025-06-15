@@ -42,6 +42,9 @@ jobs:
           max_turns: "20"
           allowed_tools: |
             gh
+            Bash(gh auth status)
+            Bash(gh issue create *)
+            Bash(gh repo view)
             Bash(go test ./...)
             Bash(go mod tidy)
             Bash(go build ./...)
