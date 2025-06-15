@@ -318,14 +318,15 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 	}
 	cb.mutex.Unlock()
 
-	// Execute function concurrently and wait for result via channel
-	resultChan := make(chan error, 1)
-	go func() {
-		resultChan <- fn()
+	// Execute function with panic recovery
+	err := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("function panicked: %v", r)
+			}
+		}()
+		return fn()
 	}()
-
-	// Wait for execution to complete
-	err := <-resultChan
 
 	// Post-execution processing with lock
 	cb.mutex.Lock()
