@@ -322,9 +322,14 @@ func (cb *CircuitBreaker) ExecuteContext(ctx context.Context, fn func() error) e
 	}
 	cb.mutex.Unlock()
 
-	// Execute function concurrently and wait for result via channel
+	// Execute function concurrently with panic recovery
 	done := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("function panicked: %v", r)
+			}
+		}()
 		done <- fn()
 	}()
 
