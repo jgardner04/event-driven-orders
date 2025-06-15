@@ -283,6 +283,10 @@ func New(config Config, logger *logrus.Logger) *CircuitBreaker {
 }
 
 func (cb *CircuitBreaker) Execute(fn func() error) error {
+	return cb.ExecuteContext(context.Background(), fn)
+}
+
+func (cb *CircuitBreaker) ExecuteContext(ctx context.Context, fn func() error) error {
 	// Pre-execution check with lock
 	cb.mutex.Lock()
 
@@ -319,27 +323,31 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 	cb.mutex.Unlock()
 
 	// Execute function concurrently and wait for result via channel
-	resultChan := make(chan error, 1)
+	done := make(chan error, 1)
 	go func() {
-		resultChan <- fn()
+		done <- fn()
 	}()
 
-	// Wait for execution to complete
-	err := <-resultChan
+	// Wait for execution to complete with context support
+	select {
+	case err := <-done:
+		// Function completed, update circuit breaker state
+		cb.mutex.Lock()
+		defer cb.mutex.Unlock()
 
-	// Post-execution processing with lock
-	cb.mutex.Lock()
-	defer cb.mutex.Unlock()
-
-	if err != nil {
-		cb.onFailure()
-		cb.totalFailures++
+		if err != nil {
+			cb.onFailure()
+			cb.totalFailures++
+		} else {
+			cb.onSuccess()
+			cb.totalSuccesses++
+		}
 		return err
+	case <-ctx.Done():
+		// Context cancelled/timed out
+		// Don't count context cancellation as circuit breaker failure
+		return ctx.Err()
 	}
-
-	cb.onSuccess()
-	cb.totalSuccesses++
-	return nil
 }
 
 func (cb *CircuitBreaker) onSuccess() {
