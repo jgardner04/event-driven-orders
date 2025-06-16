@@ -304,21 +304,24 @@ func (cb *CircuitBreaker) ExecuteContext(ctx context.Context, fn func() error) e
 		}
 	}
 
-	if cb.state == StateHalfOpen && cb.requests >= cb.maxRequests {
-		cb.logger.WithFields(logrus.Fields{
-			"circuit_breaker": cb.name,
-			"state": cb.state.String(),
-			"requests": cb.requests,
-			"max_requests": cb.maxRequests,
-		}).Debug("Circuit breaker half-open max requests reached")
-		cb.mutex.Unlock()
-		return ErrCircuitBreakerOpen
-	}
-
-	// Only increment counters for requests that will actually be attempted
+	// Increment counters atomically to prevent race condition
 	cb.totalRequests++
 	if cb.state == StateHalfOpen {
+		// Increment FIRST, then check if we've exceeded the limit
 		cb.requests++
+		if cb.requests > cb.maxRequests {
+			// We've exceeded the limit, roll back and reject
+			cb.requests--
+			cb.totalRequests--
+			cb.logger.WithFields(logrus.Fields{
+				"circuit_breaker": cb.name,
+				"state": cb.state.String(),
+				"requests": cb.requests,
+				"max_requests": cb.maxRequests,
+			}).Debug("Circuit breaker half-open max requests exceeded")
+			cb.mutex.Unlock()
+			return ErrCircuitBreakerOpen
+		}
 	}
 	cb.mutex.Unlock()
 
