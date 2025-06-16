@@ -27,7 +27,7 @@ func NewOrderServiceClient(baseURL string, logger *logrus.Logger, cbManager *cir
 	// HTTP timeout should be shorter than circuit breaker timeout for proper coordination
 	// Order Service is a modern microservice with faster expected response times
 	// Default: 15 seconds (matches circuit breaker timeout for proper coordination)
-	httpTimeout := getHTTPTimeout("ORDER_SERVICE_HTTP_TIMEOUT_SECONDS", "15", logger)
+	httpTimeout := getHTTPTimeout("ORDER_SERVICE_HTTP_TIMEOUT_SECONDS", "12", logger)
 
 	return &OrderServiceClient{
 		baseURL: baseURL,

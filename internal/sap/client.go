@@ -27,7 +27,7 @@ func NewClient(baseURL string, logger *logrus.Logger, cbManager *circuitbreaker.
 	// HTTP timeout should be shorter than circuit breaker timeout for proper coordination
 	// SAP typically has slower response times due to legacy system complexity
 	// Default: 10 seconds (vs 15 seconds for modern Order Service)
-	httpTimeout := getHTTPTimeout("SAP_HTTP_TIMEOUT_SECONDS", "10", logger)
+	httpTimeout := getHTTPTimeout("SAP_HTTP_TIMEOUT_SECONDS", "8", logger)
 
 	return &Client{
 		baseURL: baseURL,
