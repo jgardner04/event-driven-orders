@@ -287,6 +287,13 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 }
 
 func (cb *CircuitBreaker) ExecuteContext(ctx context.Context, fn func() error) error {
+	// Check context before acquiring lock
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// Pre-execution check with lock
 	cb.mutex.Lock()
 
@@ -353,6 +360,10 @@ func (cb *CircuitBreaker) ExecuteContext(ctx context.Context, fn func() error) e
 		return err
 	case <-ctx.Done():
 		// Context cancelled/timed out
+		// Decrement totalRequests since we're not counting this as success or failure
+		cb.mutex.Lock()
+		cb.totalRequests--
+		cb.mutex.Unlock()
 		// Don't count context cancellation as circuit breaker failure
 		return ctx.Err()
 	}
