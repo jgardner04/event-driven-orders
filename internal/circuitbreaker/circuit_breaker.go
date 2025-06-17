@@ -464,6 +464,16 @@ func (cb *CircuitBreaker) Metrics() map[string]interface{} {
 	cb.mutex.RLock()
 	defer cb.mutex.RUnlock()
 
+	lastFailure := "never"
+	if !cb.lastFailTime.IsZero() {
+		lastFailure = cb.lastFailTime.Format(time.RFC3339)
+	}
+
+	lastStateChange := "never"
+	if !cb.lastStateChange.IsZero() {
+		lastStateChange = cb.lastStateChange.Format(time.RFC3339)
+	}
+
 	return map[string]interface{}{
 		"name":             cb.name,
 		"state":            cb.state.String(),
@@ -476,8 +486,8 @@ func (cb *CircuitBreaker) Metrics() map[string]interface{} {
 		"max_failures":     cb.maxFailures,
 		"timeout_seconds":  cb.timeout.Seconds(),
 		"max_requests":     cb.maxRequests,
-		"last_failure":     cb.lastFailTime.Format(time.RFC3339),
-		"last_state_change": cb.lastStateChange.Format(time.RFC3339),
+		"last_failure":     lastFailure,
+		"last_state_change": lastStateChange,
 	}
 }
 
